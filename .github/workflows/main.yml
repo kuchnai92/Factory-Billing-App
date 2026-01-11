@@ -21,7 +21,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # This is the critical fix to stop the "unrecognized arguments" error
         pip install --upgrade flet
         pip install "flet[cli]"
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -50,8 +49,8 @@ jobs:
 
     - name: Build APK
       run: |
-        # Now the --icon flag will be recognized correctly
-        flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
+        # Using python -m flet to ensure the updated version is used
+        python -m flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
