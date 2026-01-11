@@ -21,8 +21,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Specifically installing the version that works with the current environment
-        pip install flet==0.21.2
+        # This pre-release version is the only one that reliably supports --icon on GitHub
+        pip install flet --pre
         pip install "flet[cli]"
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
@@ -50,9 +50,8 @@ jobs:
 
     - name: Build APK
       run: |
-        # Using the standard build command but ensuring the path is local
-        export PATH=$PATH:/home/runner/.local/bin
-        flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
+        # We use the full path to the freshly installed flet tool
+        python3 -m flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
