@@ -38,9 +38,9 @@ jobs:
       with:
         channel: 'stable'
 
-    - name: Accept Android Licenses (The Fix)
+    - name: FORCE Accept Licenses (The Nuclear Fix)
       run: |
-        yes | flutter doctor --android-licenses || true
+        yes | sdkmanager --licenses > /dev/null || true
         flutter doctor
 
     - name: Build APK
