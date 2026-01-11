@@ -3,7 +3,7 @@ name: Build Flet APK
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # Allows you to start the build manually
+  workflow_dispatch:
 
 jobs:
   build:
@@ -34,6 +34,10 @@ jobs:
       uses: subosito/flutter-action@v2
       with:
         channel: 'stable'
+
+    - name: Accept Android Licenses
+      run: |
+        yes | flutter doctor --android-licenses
 
     - name: Build APK
       run: |
