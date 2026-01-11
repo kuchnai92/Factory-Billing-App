@@ -21,8 +21,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # This line forces the update to the latest Flet version to support the --icon flag
-        pip install --upgrade "flet[cli]"
+        # This is the critical fix to stop the "unrecognized arguments" error
+        pip install --upgrade flet
+        pip install "flet[cli]"
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Setup Java
@@ -31,7 +32,7 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Setup Android SDK Tools (The Key to Success)
+    - name: Setup Android SDK Tools
       uses: android-actions/setup-android@v3
       with:
         cmdline-tools-version: 11076708
@@ -41,23 +42,19 @@ jobs:
       with:
         channel: 'stable'
 
-    - name: Accept Licenses (With Safety Lock)
+    - name: Accept Licenses
       run: |
-        # We try to accept licenses, but if it complains, we force it to continue anyway
         yes | sdkmanager --licenses || true
         yes | flutter doctor --android-licenses || true
-        
-        # This is the important part: We tell it NOT to crash even if it finds issues
         flutter doctor || true
 
     - name: Build APK
       run: |
-        # Using the updated flags for your icon and product name
+        # Now the --icon flag will be recognized correctly
         flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: my-billing-app
-        # Path updated to catch the built APK regardless of filename
         path: build/apk/*.apk
