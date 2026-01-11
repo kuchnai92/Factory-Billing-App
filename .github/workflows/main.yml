@@ -30,14 +30,18 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
         channel: 'stable'
 
-    - name: Accept Android Licenses
+    - name: Accept Android Licenses (The Fix)
       run: |
-        yes | flutter doctor --android-licenses
+        yes | flutter doctor --android-licenses || true
+        flutter doctor
 
     - name: Build APK
       run: |
