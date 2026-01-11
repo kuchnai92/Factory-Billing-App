@@ -18,6 +18,7 @@ import time
 import threading
 import math
 import re
+import importlib # Added for safe importing
 
 # --- 1. AGGRESSIVE WARNING SUPPRESSION ---
 warnings.simplefilter("ignore")
@@ -29,11 +30,15 @@ os.environ["FLET_WS_MAX_MESSAGE_SIZE"] = "8000000"
 # We assume "Desktop" is Windows. If not Windows (e.g., Android/Linux), we treat it as Mobile/Cloud-Only.
 IS_WINDOWS_DESKTOP = (sys.platform == "win32")
 
-# --- PRINTER LIBRARY SETUP (Windows Only) ---
+# --- PRINTER LIBRARY SETUP (Windows Only - SAFE IMPORT) ---
+# We use importlib so the Android builder does not see "import win32print" and crash.
 HAS_WIN32PRINT = False
+win32print = None
+
 if IS_WINDOWS_DESKTOP:
     try:
-        import win32print
+        # Dynamically import win32print only if we are on Windows
+        win32print = importlib.import_module("win32print")
         HAS_WIN32PRINT = True
     except ImportError:
         HAS_WIN32PRINT = False
