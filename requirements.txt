@@ -1,4 +1,3 @@
 flet
 supabase
-opencv-python-headless
 fpdf
