@@ -21,9 +21,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # This pre-release version is the only one that reliably supports --icon on GitHub
-        pip install flet --pre
-        pip install "flet[cli]"
+        # We use pipx to ensure the flet command is globally available and updated
+        pip install pipx
+        pipx install flet --force
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Setup Java
@@ -50,8 +50,8 @@ jobs:
 
     - name: Build APK
       run: |
-        # We use the full path to the freshly installed flet tool
-        python3 -m flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
+        # Use pipx run to execute flet directly with the icon flag
+        pipx run flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
