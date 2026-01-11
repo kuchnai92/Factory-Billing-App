@@ -35,9 +35,16 @@ jobs:
       with:
         channel: 'stable'
 
-    - name: Accept Android Licenses
+    - name: SUPER Fix Android Licenses
       run: |
-        yes | flutter doctor --android-licenses
+        # 1. Manually create the license file (The "Forgery" Method)
+        mkdir -p $ANDROID_HOME/licenses
+        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+        
+        # 2. Try to accept using the official tool (The "Standard" Method)
+        yes | flutter doctor --android-licenses || true
+        
+        # 3. Check if it worked (Just for logs)
         flutter doctor
 
     - name: Build APK
