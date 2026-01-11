@@ -21,7 +21,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install "flet[cli]"
+        # This line forces the update to the latest Flet version to support the --icon flag
+        pip install --upgrade "flet[cli]"
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Setup Java
@@ -51,10 +52,12 @@ jobs:
 
     - name: Build APK
       run: |
+        # Using the updated flags for your icon and product name
         flet build apk --icon assets/icon.png --product "Factory Billing" --verbose
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: my-billing-app
+        # Path updated to catch the built APK regardless of filename
         path: build/apk/*.apk
