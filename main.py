@@ -3,9 +3,7 @@ import json
 import os
 import sys
 import shutil
-import csv
 import asyncio 
-import logging
 import warnings
 import copy
 import hashlib
@@ -13,31 +11,25 @@ from datetime import datetime, timedelta
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos 
 import webbrowser
-import subprocess
-import time
 import threading
 import math
 import re
-import importlib # Added for safe importing
+import time
+import importlib
 
 # --- 1. AGGRESSIVE WARNING SUPPRESSION ---
 warnings.simplefilter("ignore")
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 os.environ["FLET_WS_MAX_MESSAGE_SIZE"] = "8000000"
 
 # --- DETECT PLATFORM (DESKTOP VS MOBILE) ---
-# We assume "Desktop" is Windows. If not Windows (e.g., Android/Linux), we treat it as Mobile/Cloud-Only.
 IS_WINDOWS_DESKTOP = (sys.platform == "win32")
 
-# --- PRINTER LIBRARY SETUP (Windows Only - SAFE IMPORT) ---
-# We use importlib so the Android builder does not see "import win32print" and crash.
+# --- PRINTER LIBRARY SETUP (Windows Only) ---
 HAS_WIN32PRINT = False
 win32print = None
 
 if IS_WINDOWS_DESKTOP:
     try:
-        # Dynamically import win32print only if we are on Windows
         win32print = importlib.import_module("win32print")
         HAS_WIN32PRINT = True
     except ImportError:
@@ -49,7 +41,7 @@ try:
     HAS_SUPABASE = True
 except ImportError:
     HAS_SUPABASE = False
-    print("Warning: 'supabase' library not found. Run 'pip install supabase' to enable database sync.")
+    print("Warning: 'supabase' library not found.")
 
 # YOUR SUPABASE KEYS
 SUPABASE_URL = "https://fyqdiihytcybtlweiaeb.supabase.co"
@@ -63,7 +55,7 @@ if HAS_SUPABASE:
         print(f"Supabase Init Error: {e}")
         HAS_SUPABASE = False
 
-# --- TRY IMPORTING TEXT SHAPERS (For correct Urdu display) ---
+# --- TRY IMPORTING TEXT SHAPERS ---
 try:
     import arabic_reshaper
     from bidi.algorithm import get_display
@@ -98,6 +90,20 @@ CONFIG_FILE = os.path.join(REAL_DATA_DIR, "config.json")
 
 CURRENT_ADMIN = "default"
 
+# --- HELPER: NUMERIC SORT KEY ---
+def get_id_sort_key(item):
+    """Extracts number from ID (e.g. 'P-10' -> 10) for correct sorting."""
+    try:
+        # Get ID string, default to "0"
+        id_str = str(item.get('id', '0'))
+        # Find all numbers
+        numbers = re.findall(r'\d+', id_str)
+        if numbers:
+            return int(numbers[0])
+        return 0
+    except:
+        return 0
+
 # --- SECURITY HELPER ---
 def hash_val(text):
     return hashlib.sha256(str(text).encode()).hexdigest()
@@ -131,7 +137,6 @@ def forced_cleanup(target_dir):
 forced_cleanup(os.path.join(APP_ROOT, "test_data"))
 
 def backup_data(username):
-    # Only run backup on Desktop
     if IS_WINDOWS_DESKTOP:
         try:
             admin_backup_root = os.path.join(APP_ROOT, "backups", f"backups_{username}")
@@ -161,8 +166,6 @@ def get_table_name_from_file(filepath):
 
 def load_data(file, default):
     data = default
-    
-    # 1. DESKTOP: Try to load from local file first
     if IS_WINDOWS_DESKTOP:
         if os.path.exists(file):
             with open(file, "r") as f:
@@ -170,47 +173,32 @@ def load_data(file, default):
                     data = json.load(f)
                 except: 
                     pass 
-    
-    # 2. BOTH: Sync with Supabase
     if HAS_SUPABASE and supabase:
-        # We generally don't sync 'config.json' from cloud to allow local settings
         if "config.json" not in file:
             table_name = get_table_name_from_file(file)
             if table_name:
                 try:
-                    # Mobile or Desktop: Fetch latest data
                     response = supabase.table(table_name).select("*").execute()
                     if response.data:
                         data = response.data
-                        
-                        # IF DESKTOP: Update the local file with cloud data
                         if IS_WINDOWS_DESKTOP:
                             with open(file, "w") as f:
                                 json.dump(data, f, indent=4)
-                                
                 except Exception as e:
                     print(f"Supabase Load Error ({table_name}): {e}")
-                    # If mobile and no internet, we return default (RAM empty)
-                    # If desktop, we already loaded local data, so we're good
-    
     return data
 
 def save_data(file, data):
-    # 1. DESKTOP: Save to local file
     if IS_WINDOWS_DESKTOP:
         with open(file, "w") as f:
             json.dump(data, f, indent=4)
-    
-    # 2. BOTH: Send to Supabase
     if HAS_SUPABASE and supabase and "config.json" not in file:
         table_name = get_table_name_from_file(file)
-        
         def push_to_db(t_name, payload):
             try:
                 supabase.table(t_name).upsert(payload).execute()
             except Exception as e:
                 print(f"Supabase Save Error ({t_name}): {e}")
-
         if table_name:
             threading.Thread(target=push_to_db, args=(table_name, data), daemon=True).start()
 
@@ -266,7 +254,6 @@ def generate_pdf(invoice, filename):
         except Exception as e:
             print(f"Font loading error: {e}")
 
-    # --- FIX FOR "CHARACTER OUTSIDE RANGE" ---
     has_arial = False
     if os.path.exists("c:/windows/fonts/arial.ttf"):
         try:
@@ -274,7 +261,6 @@ def generate_pdf(invoice, filename):
             has_arial = True
         except:
             pass
-    # ---------------------------------------------------------
 
     def set_my_font(style='', size=10):
         if has_custom_font:
@@ -441,7 +427,6 @@ def generate_pdf(invoice, filename):
     path = os.path.join(DATA_DIR, filename)
     
     try:
-        # Save PDF to disk (Desktop) or Temp (Mobile)
         pdf.output(path)
     except (PermissionError, OSError):
         try:
@@ -456,7 +441,6 @@ def generate_pdf(invoice, filename):
 
 # --- UPDATED PRINTER FUNCTION (HYBRID) ---
 def print_pdf_silently(path):
-    # DESKTOP (Windows)
     if IS_WINDOWS_DESKTOP:
         if HAS_WIN32PRINT:
             try:
@@ -466,12 +450,18 @@ def print_pdf_silently(path):
                 return False, f"Print Failed: {str(e)}"
         else:
              return False, "win32print not installed."
-    # MOBILE / NON-WINDOWS
     else:
+        # On Mobile, "Direct Print" usually means opening the share/view dialog
+        # We can try page.launch_url here too as a fallback for "print" button
         return False, "Direct Print not supported on Mobile. Please view/share PDF."
 
 # --- MAIN APP ---
 def main(page: ft.Page):
+    page.window_icon = "icon.png"
+    # --- CRITICAL FIX 1: CLEAR SCREEN ON LOAD ---
+    page.controls.clear()
+    page.update()
+
     try:
         loop = asyncio.get_event_loop()
         def suppress_connection_error(loop, context):
@@ -489,7 +479,6 @@ def main(page: ft.Page):
     page.window.width = 1200
     page.window.height = 800
     
-    # Dynamic Title
     mode_title = "Desktop Mode" if IS_WINDOWS_DESKTOP else "Mobile Cloud Mode"
     page.title = f"Amin & Sons - Enterprise Billing ({mode_title})"
     
@@ -506,16 +495,20 @@ def main(page: ft.Page):
     returns_data = [] 
     
     # --- SIMPLIFIED STATE ---
+    # ADDED "is_logged_in" to prevent auto-login
     state = {
         "rev_hidden": True, 
         "billing_items": [], 
         "billing_customer": None, 
-        "billing_product": None, 
+        "billing_product": None,
+        "billing_category": None, 
         "search_query": "", 
         "is_test_mode": False,
         "current_page": 1, 
         "page_size": 20,
         "filter_cust": None,
+        "nav_index": 0,
+        "is_logged_in": False 
     }
     
     loading_dlg = ft.AlertDialog(
@@ -576,8 +569,10 @@ def main(page: ft.Page):
         
         state["search_query"] = ""
         state["current_page"] = 1
+        state["is_logged_in"] = False # Reset login state
         
         page.controls.clear()
+        page.navigation_bar = None 
         page.overlay.clear()
         page.overlay.append(loading_dlg)
         page.overlay.append(global_msg_dlg)
@@ -846,7 +841,7 @@ def main(page: ft.Page):
                     page.update()
             threading.Thread(target=task, daemon=True).start()
 
-        # --- UPDATED: Background PDF Opening to prevent freezing ---
+        # --- UPDATED: Background PDF Opening to prevent freezing AND MOBILE FIX ---
         def open_pdf_in_background(inv):
             loading_dlg.open = True
             page.update()
@@ -854,10 +849,15 @@ def main(page: ft.Page):
                 try:
                     filename = f"invoice_{inv['id']}.pdf"
                     file_path = generate_pdf(inv, filename)
-                    # Open PDF in background thread
-                    webbrowser.open('file:///' + os.path.abspath(file_path))
+                    
+                    if IS_WINDOWS_DESKTOP:
+                        webbrowser.open('file:///' + os.path.abspath(file_path))
+                    else:
+                        # Mobile/Android logic: use page.launch_url with file protocol
+                        page.launch_url(f"file://{os.path.abspath(file_path)}")
                 except Exception as e:
                     print(f"PDF Error: {e}")
+                    show_msg(f"Could not open PDF: {e}", "red")
                 finally:
                     loading_dlg.open = False
                     page.update()
@@ -1042,7 +1042,7 @@ def main(page: ft.Page):
             height=40,
             text_size=12,
             content_padding=10,
-            autofocus=True 
+            autofocus=False 
         )
         
         content_area.controls.append(ft.Row(
@@ -1244,25 +1244,57 @@ def main(page: ft.Page):
         dlg.open = True
         page.update()
 
-    # --- REFACTORED CUSTOMERS VIEW WITH LISTVIEW ---
+    # --- KEYBOARD FIX: REFACTORED CUSTOMERS VIEW ---
     def render_customers_view(focus_search=False):
-        def filter_customers(e):
-            state["search_query"] = search_bar.value.lower()
-            render_tab(1, focus_search=True)
+        # 1. Create list view first (empty)
+        cust_list_view = ft.ListView(expand=True, spacing=5)
+
+        # 2. Function to generate ROW CONTROLS (Data -> UI)
+        def get_customer_rows(query):
+            filtered_list = [c for c in customers if query in c['name'].lower() or query in c.get('phone', '').lower()]
+            display_customers = filtered_list[:50] if not query else filtered_list
             
+            rows = []
+            for c in display_customers:
+                row_content = ft.Container(
+                    content=ft.Row([
+                        ft.Text(str(c.get('id', '')), width=80), 
+                        ft.Container(ft.Text(c['name']), expand=True), 
+                        ft.Text(c.get('phone', ''), width=120), 
+                        ft.Container(ft.Text(c.get('address', '')), expand=True), 
+                        ft.Text(f"{c.get('balance', 0):.2f}", width=100, color="red" if c.get('balance', 0) > 0 else "black"),
+                        ft.Row([
+                            ft.IconButton(ft.Icons.INFO, icon_color="green", tooltip="Payment History & Entry", on_click=lambda e, curr=c: show_customer_payment_info(curr)),
+                            ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=c: show_customer_dialog(curr)), 
+                            ft.IconButton(ft.Icons.DELETE, icon_color="red", on_click=lambda e, i=c: confirm_and_delete(i, customers, CUSTOMERS_FILE, 1, "Customer"))
+                        ], width=150, alignment=ft.MainAxisAlignment.CENTER)
+                    ]),
+                    padding=10, bgcolor="white",
+                    border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.GREY_200))
+                )
+                rows.append(row_content)
+            return rows
+
+        # 3. Update function for Search Bar (Attached mode)
+        def handle_search_change(e):
+            query = search_bar.value.lower() if search_bar.value else ""
+            state["search_query"] = query
+            # Clear old controls and add new ones
+            cust_list_view.controls.clear()
+            cust_list_view.controls.extend(get_customer_rows(query))
+            cust_list_view.update()
+
+        # 4. Search Bar
         search_bar = ft.TextField(
             label="Search Customers (Name or Phone)", 
             prefix_icon=ft.Icons.SEARCH, 
-            on_change=filter_customers, 
+            on_change=handle_search_change, 
             value=state.get("search_query", ""), 
             width=400, 
             autofocus=focus_search
         )
         
-        content_area.controls.append(ft.Row([ft.Text("Customers", size=30, weight="bold"), ft.ElevatedButton(content=ft.Text("Add Customer"), icon=ft.Icons.ADD, on_click=lambda _: show_customer_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
-        content_area.controls.append(ft.Row([search_bar], alignment=ft.MainAxisAlignment.START))
-        
-        # New Header
+        # 5. Header
         header_row = ft.Container(
             content=ft.Row([
                 ft.Text("ID", width=80, weight="bold"),
@@ -1275,32 +1307,14 @@ def main(page: ft.Page):
             bgcolor=ft.Colors.GREY_300, padding=10, border_radius=5
         )
 
-        cust_list_view = ft.ListView(expand=True, spacing=5)
+        # 6. Initial Population (Detached mode - NO .update() call)
+        # CRITICAL FIX: Only populate the LIST, DO NOT CALL UPDATE
+        initial_query = state.get("search_query", "")
+        cust_list_view.controls.extend(get_customer_rows(initial_query))
 
-        customers.sort(key=lambda x: int(str(x.get('id', '0')).split('-')[-1].split()[0]))
-        
-        filtered_list = [c for c in customers if state["search_query"] in c['name'].lower() or state["search_query"] in c.get('phone', '').lower()]
-        display_customers = filtered_list[:50] if not state["search_query"] else filtered_list
-
-        for c in display_customers:
-            row_content = ft.Container(
-                content=ft.Row([
-                    ft.Text(str(c.get('id', '')), width=80), 
-                    ft.Container(ft.Text(c['name']), expand=True), 
-                    ft.Text(c.get('phone', ''), width=120), 
-                    ft.Container(ft.Text(c.get('address', '')), expand=True), 
-                    ft.Text(f"{c.get('balance', 0):.2f}", width=100, color="red" if c.get('balance', 0) > 0 else "black"),
-                    ft.Row([
-                        ft.IconButton(ft.Icons.INFO, icon_color="green", tooltip="Payment History & Entry", on_click=lambda e, curr=c: show_customer_payment_info(curr)),
-                        ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=c: show_customer_dialog(curr)), 
-                        ft.IconButton(ft.Icons.DELETE, icon_color="red", on_click=lambda e, i=c: confirm_and_delete(i, customers, CUSTOMERS_FILE, 1, "Customer"))
-                    ], width=150, alignment=ft.MainAxisAlignment.CENTER)
-                ]),
-                padding=10, bgcolor="white",
-                border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.GREY_200))
-            )
-            cust_list_view.controls.append(row_content)
-        
+        # 7. Add controls to page
+        content_area.controls.append(ft.Row([ft.Text("Customers", size=30, weight="bold"), ft.ElevatedButton(content=ft.Text("Add Customer"), icon=ft.Icons.ADD, on_click=lambda _: show_customer_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
+        content_area.controls.append(ft.Row([search_bar], alignment=ft.MainAxisAlignment.START))
         content_area.controls.append(ft.Column([header_row, cust_list_view], expand=True))
 
     def show_customer_dialog(edit_item=None):
@@ -1326,64 +1340,88 @@ def main(page: ft.Page):
                 state["search_query"] = ""; render_tab(1)
             else: show_msg("Name required")
             
-        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([id_f, name_f, phone_f, addr_f, balance_f], tight=True), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
+        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([id_f, name_f, phone_f, addr_f, balance_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
         page.overlay.append(dlg)
         dlg.open = True
         page.update()
 
-    # --- REFACTORED STOCK VIEW WITH LISTVIEW ---
+    # --- REFACTORED STOCK VIEW (WITH CATEGORY) ---
     def render_stock_view(focus_search=False):
         low_stock_items = [item for item in inventory if item.get('qty', 0) < 5]
         warning_panel = ft.Container(visible=False)
         if low_stock_items:
             warning_panel = ft.Container(content=ft.Column([ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color="red"), ft.Text("Low Stock", color="red", weight="bold")]), ft.Divider(), *[ft.Text(f"• {i['name']} ({i['qty']})", size=12, color="red") for i in low_stock_items]], spacing=5, scroll=ft.ScrollMode.ADAPTIVE), bgcolor="#FFEBEE", padding=15, border_radius=10, border=ft.border.all(1, "red"), width=200, visible=True)
         
-        def filter_stock(e):
-            state["search_query"] = search_bar.value.lower(); render_tab(2, focus_search=True)
-        
+        # 1. Create list view
+        stock_list_view = ft.ListView(expand=True, spacing=5)
+
+        # 2. Logic to generate rows
+        def get_stock_rows(query):
+            # --- FIX: ROBUST SORTING ---
+            sorted_inventory = sorted(inventory, key=get_id_sort_key)
+
+            filtered_list = [item for item in sorted_inventory if query in item['name'].lower()]
+            display_stock = filtered_list[:50] if not query else filtered_list
+            
+            rows = []
+            for item in display_stock:
+                # --- FIX: HANDLE NULL CATEGORY ---
+                cat_display = item.get('category')
+                if not cat_display: cat_display = "NULL" # As per user request
+                
+                row_content = ft.Container(
+                    content=ft.Row([
+                        ft.Text(str(item.get('id', '')), width=80), 
+                        ft.Container(ft.Text(item['name']), expand=True),
+                        ft.Text(cat_display, width=100, italic=True, size=12), # Added Category Column
+                        ft.Text(f"{item['price']:.0f}", width=80), 
+                        ft.Text(str(item.get('qty', 0)), width=60, color="red" if item.get('qty', 0) < 5 else "black"), 
+                        ft.Row([
+                            ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=item: show_product_dialog(curr)), 
+                            ft.IconButton(ft.Icons.DELETE, icon_color="red", on_click=lambda e, i=item: confirm_and_delete(i, inventory, INVENTORY_FILE, 2, "Product"))
+                        ], width=120, alignment=ft.MainAxisAlignment.CENTER)
+                    ]),
+                    padding=10, bgcolor="white",
+                    border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.GREY_200))
+                )
+                rows.append(row_content)
+            return rows
+
+        # 3. Update function for Search Bar (Attached mode)
+        def handle_search_change(e):
+            query = search_bar.value.lower() if search_bar.value else ""
+            state["search_query"] = query
+            stock_list_view.controls.clear()
+            stock_list_view.controls.extend(get_stock_rows(query))
+            stock_list_view.update()
+
+        # 4. Search Bar
         search_bar = ft.TextField(
             label="Search Products", 
             prefix_icon=ft.Icons.SEARCH, 
-            on_change=filter_stock, 
+            on_change=handle_search_change,
             value=state.get("search_query", ""), 
             width=400, 
             autofocus=focus_search
         )
         
-        inventory.sort(key=lambda x: int(str(x.get('id', '0')).split('-')[-1].split()[0]))
-        filtered_list = [item for item in inventory if state["search_query"] in item['name'].lower()]
-        display_stock = filtered_list[:50] if not state["search_query"] else filtered_list
-
-        # New Header
+        # 5. Header
         header_row = ft.Container(
             content=ft.Row([
                 ft.Text("ID", width=80, weight="bold"),
                 ft.Container(ft.Text("Product", weight="bold"), expand=True),
-                ft.Text("Price", width=100, weight="bold"),
-                ft.Text("Stock", width=80, weight="bold"),
+                ft.Text("Category", width=100, weight="bold"), # Added Category Header
+                ft.Text("Price", width=80, weight="bold"),
+                ft.Text("Stock", width=60, weight="bold"),
                 ft.Text("Action", width=120, weight="bold", text_align="center"),
             ]),
             bgcolor=ft.Colors.GREY_300, padding=10, border_radius=5
         )
         
-        stock_list_view = ft.ListView(expand=True, spacing=5)
-
-        for item in display_stock:
-            row_content = ft.Container(
-                content=ft.Row([
-                    ft.Text(str(item.get('id', '')), width=80), 
-                    ft.Container(ft.Text(item['name']), expand=True), 
-                    ft.Text(f"{item['price']:.2f}", width=100), 
-                    ft.Text(str(item.get('qty', 0)), width=80, color="red" if item.get('qty', 0) < 5 else "black"), 
-                    ft.Row([
-                        ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=item: show_product_dialog(curr)), 
-                        ft.IconButton(ft.Icons.DELETE, icon_color="red", on_click=lambda e, i=item: confirm_and_delete(i, inventory, INVENTORY_FILE, 2, "Product"))
-                    ], width=120, alignment=ft.MainAxisAlignment.CENTER)
-                ]),
-                padding=10, bgcolor="white",
-                border=ft.border.only(bottom=ft.border.BorderSide(1, ft.Colors.GREY_200))
-            )
-            stock_list_view.controls.append(row_content)
+        # 6. Populate initial list (Detached mode - NO .update() call)
+        # CRITICAL FIX: Only populate the LIST, DO NOT CALL UPDATE
+        initial_query = state.get("search_query", "")
+        stock_list_view.controls.extend(get_stock_rows(initial_query))
 
         content_area.controls.append(ft.Row([ft.Text("Inventory", size=30, weight="bold"), ft.ElevatedButton(content=ft.Text("Add Product"), icon=ft.Icons.ADD, on_click=lambda _: show_product_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
         content_area.controls.append(ft.Row([ft.Column([ft.Row([search_bar], alignment=ft.MainAxisAlignment.START), header_row, stock_list_view], expand=True), warning_panel], vertical_alignment=ft.CrossAxisAlignment.START, spacing=20, expand=True))
@@ -1391,7 +1429,55 @@ def main(page: ft.Page):
     def show_product_dialog(edit_item=None):
         title = "Edit Product" if edit_item else "New Product"
         id_val = edit_item['id'] if edit_item else f"P-{len(inventory) + 1}"
-        id_f, name_f, cost_f, price_f, qty_f = ft.TextField(label="ID", value=id_val, read_only=False), ft.TextField(label="Name", value=edit_item['name'] if edit_item else ""), ft.TextField(label="Cost Price", value=str(edit_item.get('cost', 0)) if edit_item else ""), ft.TextField(label="Sale Price", value=str(edit_item['price']) if edit_item else ""), ft.TextField(label="Qty", value=str(edit_item.get('qty', 0)) if edit_item else "")
+        
+        # --- FIX: Safe Unique Categories for Dropdown ---
+        unique_cats = sorted(list(set([i.get('category') for i in inventory if i.get('category')])))
+        if "General" not in unique_cats: unique_cats.insert(0, "General")
+        
+        # Controls
+        id_f = ft.TextField(label="ID", value=id_val, read_only=False)
+        name_f = ft.TextField(label="Name", value=edit_item['name'] if edit_item else "")
+        
+        # Category Logic
+        current_cat = edit_item.get('category') if edit_item else "General"
+        if not current_cat: current_cat = "General" # Default to General if None
+
+        # Fix: Instantiate Dropdown first, assign on_change later
+        category_dd = ft.Dropdown(
+            label="Category", 
+            options=[ft.dropdown.Option(c) for c in unique_cats], 
+            value=current_cat,
+            expand=True
+        )
+        
+        def add_new_category(e):
+            def confirm_add_cat(e):
+                new_cat_name = new_cat_input.value.strip()
+                if new_cat_name:
+                    unique_cats.append(new_cat_name)
+                    # Re-sort and update dropdown
+                    category_dd.options = [ft.dropdown.Option(c) for c in sorted(list(set(unique_cats)))]
+                    category_dd.value = new_cat_name
+                    category_dd.update()
+                    cat_dlg.open = False
+                    page.update()
+            
+            new_cat_input = ft.TextField(label="New Category Name", autofocus=True)
+            cat_dlg = ft.AlertDialog(
+                title=ft.Text("Add Category"), 
+                content=new_cat_input, 
+                actions=[ft.TextButton("Add", on_click=confirm_add_cat)]
+            )
+            page.overlay.append(cat_dlg)
+            cat_dlg.open = True
+            page.update()
+
+        add_cat_btn = ft.IconButton(ft.Icons.ADD, on_click=add_new_category, tooltip="Create New Category")
+        
+        cost_f = ft.TextField(label="Cost Price", value=str(edit_item.get('cost', 0)) if edit_item else "")
+        price_f = ft.TextField(label="Sale Price", value=str(edit_item['price']) if edit_item else "")
+        qty_f = ft.TextField(label="Qty", value=str(edit_item.get('qty', 0)) if edit_item else "")
+        
         def save(e):
             clean_id = id_f.value.strip()
             if not clean_id: show_msg("ID cannot be empty"); return
@@ -1400,7 +1486,10 @@ def main(page: ft.Page):
             try:
                 c_val = float(cost_f.value); p_val = float(price_f.value); q_val = int(qty_f.value)
                 if c_val < 0 or p_val < 0 or q_val < 0: show_msg("Cost, Price, and Qty cannot be negative", "red"); return
-                data = {'id': clean_id, 'name': name_f.value, 'cost': c_val, 'price': p_val, 'qty': q_val}
+                
+                final_cat = category_dd.value
+                
+                data = {'id': clean_id, 'name': name_f.value, 'cost': c_val, 'price': p_val, 'qty': q_val, 'category': final_cat}
                 if edit_item: edit_item.update(data)
                 else: inventory.append(data)
                 save_data(INVENTORY_FILE, inventory)
@@ -1409,7 +1498,11 @@ def main(page: ft.Page):
                 state["search_query"] = ""; render_tab(2)
             except ValueError: show_msg("Invalid numeric values", "red")
         
-        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([id_f, name_f, cost_f, price_f, qty_f], tight=True), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
+        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([
+            id_f, name_f, 
+            ft.Row([category_dd, add_cat_btn]), # Added Category Row
+            cost_f, price_f, qty_f
+        ], tight=True, scroll=ft.ScrollMode.ADAPTIVE), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
         page.overlay.append(dlg)
         dlg.open = True
         page.update()
@@ -1418,18 +1511,40 @@ def main(page: ft.Page):
         if not customers or not inventory:
             content_area.controls.append(ft.Text("Add data first.", color="red")); return
         
+        # --- 1. DATA PREP ---
+        # (Customer Dropdown logic remains)
         customer_options = [ft.dropdown.Option(key=str(c['id']), text=f"{c['name']}") for c in customers]
         current_cust_val = str(state["billing_customer"]) if state["billing_customer"] else None
-        customer_dd = ft.Dropdown(label="Customer", options=customer_options, width=400, value=current_cust_val)
+        
+        customer_dd = ft.Dropdown(
+            label="Customer", 
+            options=customer_options, 
+            width=400, 
+            value=current_cust_val
+        )
         def on_cust_change(e): state["billing_customer"] = e.control.value
         customer_dd.on_change = on_cust_change
         
-        product_options = [ft.dropdown.Option(key=str(p['id']), text=p['name']) for p in inventory]
-        current_prod_val = str(state.get("billing_product")) if state.get("billing_product") else None
-        product_dd = ft.Dropdown(label="Product", options=product_options, width=300, value=current_prod_val)
-        def on_prod_change(e): state["billing_product"] = e.control.value
-        product_dd.on_change = on_prod_change
+        # --- 2. PRODUCT SELECTION (Simplified - No Categories) ---
+        # Sort products by name for easier finding
+        sorted_inventory = sorted(inventory, key=lambda x: x['name'])
         
+        product_options = [
+            ft.dropdown.Option(key=str(p['id']), text=f"{p['name']} - {p['price']}") 
+            for p in sorted_inventory
+        ]
+        
+        product_dd = ft.Dropdown(
+            label="Select Product", 
+            width=400, 
+            options=product_options,
+            hint_text="Choose a product..."
+        )
+
+        def on_prod_change(e): 
+            state["billing_product"] = e.control.value
+        product_dd.on_change = on_prod_change
+
         qty_f = ft.TextField(label="Qty", width=100)
         
         def delete_billing_item(index): 
@@ -1450,6 +1565,7 @@ def main(page: ft.Page):
         def add_i(e):
             current_selection = state.get("billing_product") or product_dd.value
             if customer_dd.value: state["billing_customer"] = customer_dd.value
+
             if not current_selection: show_msg("Please select a product first"); return
 
             prod = next((p for p in inventory if str(p['id']) == str(current_selection)), None)
@@ -1590,7 +1706,16 @@ def main(page: ft.Page):
             preview_dlg.open = True
             page.update()
             
-        content_area.controls.extend([ft.Text("New Invoice", size=30, weight="bold"), customer_dd, ft.Row([product_dd, qty_f, ft.ElevatedButton(content=ft.Text("Add Item"), on_click=add_i), ft.ElevatedButton(content=ft.Text("Clear All"), icon=ft.Icons.DELETE_FOREVER, icon_color="red", on_click=clear_all_billing)]), items_table, total_txt, ft.ElevatedButton(content=ft.Text("Finalize & Preview"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview)])
+        content_area.controls.extend([
+            ft.Text("New Invoice", size=30, weight="bold"), 
+            customer_dd,
+            ft.Divider(),
+            product_dd, # Replaced Tabs/Filters with direct Product Dropdown
+            ft.Row([qty_f, ft.ElevatedButton(content=ft.Text("Add Item"), on_click=add_i), ft.ElevatedButton(content=ft.Text("Clear All"), icon=ft.Icons.DELETE_FOREVER, icon_color="red", on_click=clear_all_billing)]), 
+            items_table, 
+            total_txt, 
+            ft.ElevatedButton(content=ft.Text("Finalize & Preview"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview)
+        ])
 
     def render_settings_view():
         content_area.controls.append(ft.Text("Settings", size=30, weight="bold"))
@@ -1790,45 +1915,28 @@ def main(page: ft.Page):
 
             def task():
                 errors = []
-                
-                # 1. Sync Invoices (Special Logic: Rename on Conflict)
-                # We iterate a copy to safely modify the original list if needed
                 for inv in list(invoices): 
                     try:
-                        # Check if ID exists in cloud
                         res = supabase.table("invoices").select("id").eq("id", inv['id']).execute()
-                        
-                        if res.data: # ID exists!
+                        if res.data: 
                             old_id = inv['id']
                             new_id = f"{old_id} new"
-                            
-                            # 1. Update Invoice ID
                             inv['id'] = new_id
-                            
-                            # 2. Update Customer Reference
                             cust_name = inv.get('customer')
                             cust = next((c for c in customers if c['name'] == cust_name), None)
                             if cust and 'payment_history' in cust:
                                 for payment in cust['payment_history']:
                                     if str(payment.get('invoice_id')) == str(old_id):
                                         payment['invoice_id'] = new_id
-                                
-                            # 3. Save Local Changes (Desktop only or RAM update)
                             if IS_WINDOWS_DESKTOP:
                                 save_data(INVOICES_JSON, invoices)
                                 save_data(CUSTOMERS_FILE, customers)
-                                
-                            # 4. Upload as NEW record
                             supabase.table("invoices").insert(inv).execute()
-                            
                         else:
-                            # ID doesn't exist, just upsert/insert
                             supabase.table("invoices").upsert(inv).execute()
-                            
                     except Exception as ex:
                         errors.append(f"Inv {inv.get('id')}: {ex}")
 
-                # 2. Sync Customers & Inventory (Standard Upsert is usually fine)
                 try:
                     for c in customers: supabase.table("customers").upsert(c).execute()
                 except Exception as e: errors.append(f"Customers: {e}")
@@ -1863,8 +1971,16 @@ def main(page: ft.Page):
             admin_management_area
         ])
 
-    def on_nav_change(e): state["search_query"] = ""; render_tab(e.control.selected_index)
+    def on_nav_change(e): 
+        idx = e.control.selected_index
+        state["nav_index"] = idx
+        state["search_query"] = ""
+        # Sync both controls
+        rail.selected_index = idx
+        bottom_nav.selected_index = idx
+        render_tab(idx)
     
+    # --- NAVIGATION CONTROLS ---
     rail = ft.NavigationRail(
         selected_index=0, 
         label_type=ft.NavigationRailLabelType.ALL, 
@@ -1884,6 +2000,38 @@ def main(page: ft.Page):
             padding=10
         )
     )
+
+    bottom_nav = ft.NavigationBar(
+        selected_index=0,
+        destinations=[
+            ft.NavigationBarDestination(icon=ft.Icons.HOME, label="Home"), 
+            ft.NavigationBarDestination(icon=ft.Icons.PERSON, label="Customers"), 
+            ft.NavigationBarDestination(icon=ft.Icons.INVENTORY, label="Stock"), 
+            ft.NavigationBarDestination(icon=ft.Icons.RECEIPT, label="Billing"), 
+            ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="Settings")
+        ],
+        on_change=on_nav_change
+    )
+
+    # --- CRITICAL FIX 2: PREVENT AUTO-LAYOUT IF NOT LOGGED IN ---
+    def configure_layout():
+        # Check login status FIRST
+        if not state.get("is_logged_in", False) and not state.get("is_test_mode", False):
+            return  # STOP: Don't redraw dashboard if not logged in
+
+        page.controls.clear()
+        # Mobile Breakpoint (640px is standard for large phones)
+        if page.width < 640:
+            page.navigation_bar = bottom_nav
+            rail.visible = False
+            page.add(main_container)
+        else:
+            page.navigation_bar = None
+            rail.visible = True
+            page.add(ft.Row([rail, ft.VerticalDivider(width=1), main_container], expand=True))
+        page.update()
+
+    page.on_resize = lambda e: configure_layout()
 
     def login_click(e):
         admins = config.get("admins", {"admin": "123"})
@@ -1917,12 +2065,14 @@ def main(page: ft.Page):
                 recycle_bin.clear(); recycle_bin.extend(load_data(RECYCLE_BIN_FILE, []))
                 returns_data.clear(); returns_data.extend(load_data(RETURNS_FILE, []))
                 
-                page.controls.clear()
+                # --- SET LOGIN STATE ---
+                state["is_logged_in"] = True
+
                 page.overlay.clear()
                 page.overlay.append(loading_dlg)
                 page.overlay.append(global_msg_dlg)
                 
-                page.add(ft.Row([rail, ft.VerticalDivider(width=1), main_container], expand=True))
+                configure_layout()
                 render_tab(0)
             else:
                  pass_input.error_text = "Incorrect Password"
@@ -1964,7 +2114,7 @@ def main(page: ft.Page):
 
         create_dlg = ft.AlertDialog(
             title=ft.Text("Create New Admin Account"),
-            content=ft.Column([new_user, new_pass, conf_pass], tight=True),
+            content=ft.Column([new_user, new_pass, conf_pass], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
             actions=[ft.TextButton(content=ft.Text("Create"), on_click=save_new_admin), ft.TextButton(content=ft.Text("Cancel"), on_click=close_dlg)]
         )
         page.overlay.append(create_dlg)
@@ -1985,11 +2135,14 @@ def main(page: ft.Page):
         RECYCLE_BIN_FILE = os.path.join(DATA_DIR, "recycle_bin.json")
         RETURNS_FILE = os.path.join(DATA_DIR, "returns.json")
         inventory.clear(); invoices.clear(); customers.clear(); recycle_bin.clear(); returns_data.clear()
+        
+        # --- SET TEST MODE STATE ---
         state["is_test_mode"] = True
+        state["is_logged_in"] = True # Test mode counts as logged in
         state["search_query"] = ""
         state["current_page"] = 1
-        page.controls.clear()
-        page.add(ft.Row([rail, ft.VerticalDivider(width=1), main_container], expand=True))
+        
+        configure_layout()
         render_tab(0); show_msg("Test Mode: Data will delete on close", "orange")
 
     def clear_login_errors(e):
@@ -2013,9 +2166,12 @@ def main(page: ft.Page):
     )
     test_btn_container = ft.Container(content=ft.ElevatedButton(content=ft.Text("Test App"), on_click=start_test_mode, bgcolor="grey", color="white"), left=20, bottom=20)
     page.add(ft.Stack([login_container, test_btn_container], expand=True))
+    
+    # --- CRITICAL FIX: ENSURE PAGE UPDATES AFTER ADDING LOGIN ---
+    page.update()
 
 if __name__ == "__main__":
     try:
-        ft.run(main)
+        ft.app(target=main, assets_dir="assets")
     except Exception:
         pass
