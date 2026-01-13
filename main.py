@@ -69,31 +69,33 @@ try:
 except ImportError:
     HAS_RESHAPER = False
 
-# --- SMART DATA DIRECTORY SETUP ---
+# --- SMART DATA DIRECTORY SETUP (FIXED FOR EXE) ---
 if getattr(sys, 'frozen', False):
-    APP_ROOT = os.path.dirname(sys.executable)
+    BASE_INTERNAL_DIR = sys._MEIPASS 
+    BASE_EXTERNAL_DIR = os.path.dirname(sys.executable)
 else:
-    APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+    BASE_INTERNAL_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_EXTERNAL_DIR = BASE_INTERNAL_DIR
 
+# 1. Setup Assets Path (For Fonts)
+ASSETS_DIR = os.path.join(BASE_INTERNAL_DIR, "assets")
+
+# 2. Setup Data Path (For Saving Files)
 if IS_WINDOWS_DESKTOP:
-    REAL_DATA_DIR = os.path.join(APP_ROOT, "data")
+    REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 else:
     try:
         user_home = os.path.expanduser("~")
         REAL_DATA_DIR = os.path.join(user_home, "AminSons_Data")
     except:
-        REAL_DATA_DIR = os.path.join(APP_ROOT, "data")
-
-ASSETS_DIR = os.path.join(APP_ROOT, "assets")
+        REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 
 if not os.path.exists(REAL_DATA_DIR):
     try: os.makedirs(REAL_DATA_DIR)
     except: pass
-if not os.path.exists(ASSETS_DIR):
-    try: os.makedirs(ASSETS_DIR)
-    except: pass
 
-print(f"--- STORAGE PATH: {REAL_DATA_DIR} ---")
+print(f"--- INTERNAL ASSETS: {ASSETS_DIR} ---")
+print(f"--- EXTERNAL STORAGE: {REAL_DATA_DIR} ---")
 
 # Global Variables
 DATA_DIR = REAL_DATA_DIR
@@ -119,14 +121,7 @@ def get_id_sort_key(item):
 
 # --- HELPER: RE-INDEXER FOR SEQUENTIAL IDS ---
 def reindex_collection(data_list, prefix):
-    """
-    Sorts list by current numeric ID, then reassigns IDs 
-    sequentially (e.g., C-1, C-2, C-3) to fill gaps.
-    """
-    # 1. Sort by current numeric ID to maintain relative order
     data_list.sort(key=get_id_sort_key)
-    
-    # 2. Reassign IDs sequentially
     for index, item in enumerate(data_list):
         item['id'] = f"{prefix}{index + 1}"
 
@@ -227,7 +222,7 @@ def save_data(file, data):
         if table_name:
             threading.Thread(target=push_to_db, args=(table_name, data), daemon=True).start()
 
-# Load Config with Defaults
+# Load Config
 config = load_data(CONFIG_FILE, {
     "admins": {"admin": "123"}, 
     "hide_prev_dues_on_pdf": False,
@@ -254,7 +249,6 @@ def process_text(text):
     return text
 
 def is_urdu(text):
-    """Checks if the text contains Urdu/Arabic characters."""
     if not text: return False
     for char in str(text):
         if '\u0600' <= char <= '\u06FF':
@@ -290,14 +284,6 @@ def generate_pdf(invoice, filename):
         except Exception as e:
             print(f"Font loading error: {e}")
 
-    has_arial = False
-    if os.path.exists("c:/windows/fonts/arial.ttf"):
-        try:
-            pdf.add_font("Arial", "", "c:/windows/fonts/arial.ttf")
-            has_arial = True
-        except:
-            pass
-
     # Helper to switch fonts smartly
     def set_font_smart(text, style='', size=10):
         if is_urdu(text) and has_custom_font:
@@ -315,9 +301,8 @@ def generate_pdf(invoice, filename):
 
     c_info = config.get("company_info", {})
     
-    # --- HEADER: COMPANY NAME ---
+    # --- HEADER ---
     c_name_raw = c_info.get("name", "Amin & Sons")
-    # Reduced size to 20 for better fit on thermal paper
     final_c_name = set_font_smart(c_name_raw, 'B', 20)
     
     if is_return:
@@ -328,12 +313,10 @@ def generate_pdf(invoice, filename):
     else:
         pdf.cell(0, 10, final_c_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     
-    # --- HEADER: ADDRESS (SMALL 9) ---
     c_address_raw = c_info.get("address", "26EB near Sukhbias pull, Pakpattan")
     final_c_addr = set_font_smart(c_address_raw, '', 9)
     pdf.cell(0, 5, final_c_addr, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     
-    # --- HEADER: CONTACT (SMALL 9, NO LABEL) ---
     c_phone = process_text(c_info.get("phone", "03148756922"))
     set_font_family('', 9, False) 
     pdf.cell(0, 5, c_phone, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
@@ -364,13 +347,12 @@ def generate_pdf(invoice, filename):
     pdf.write(6, f"Time: {invoice_time}")
     pdf.ln(7)
 
-    # Customer Label
+    # Customer
     pdf.set_x(2)
     set_font_family('B', 10, False)
     pdf.write(6, "Customer: ")
     indent_x = pdf.get_x()
     
-    # Customer Name (Smart Font)
     cust_raw = invoice.get('customer', 'Unknown')
     final_cust = set_font_smart(cust_raw, '', 11)
     
@@ -379,7 +361,6 @@ def generate_pdf(invoice, filename):
     pdf.set_left_margin(2) 
     pdf.ln(6)
 
-    # Address if exists
     addr_raw = invoice.get('customer_address', '')
     if addr_raw:
         final_addr = set_font_smart(addr_raw, '', 10)
@@ -408,14 +389,10 @@ def generate_pdf(invoice, filename):
         total_qty += qty
         
         pdf.set_x(2)
-        
-        # Smart Font for Item Name
         final_item_name = set_font_smart(name_raw, 'B', 10)
-        # Truncate
         if len(final_item_name) > 20: final_item_name = final_item_name[:20]
 
         pdf.cell(36, 8, final_item_name, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
-        
         set_font_family('B', 10, False)
         pdf.cell(10, 8, str(qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
         pdf.cell(14, 8, f"{price:.0f}", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
@@ -429,8 +406,6 @@ def generate_pdf(invoice, filename):
     pdf.set_dash_pattern() 
     
     # --- TOTALS SECTION ---
-    
-    # 1. Subtotal (Items Total)
     pdf.set_x(2)
     set_font_family('B', 12, False) 
     total_label = "REFUND TOTAL:" if is_return else "TOTAL:"
@@ -439,15 +414,11 @@ def generate_pdf(invoice, filename):
     set_font_family('B', 11, False) 
     pdf.cell(12, 8, str(total_qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C') 
     pdf.set_x(58) 
-    # This is effectively the subtotal before discount/delivery in UI logic
-    # But invoice['total'] holds the raw sum of items usually.
-    # Let's assume invoice['total'] is the Item Sum.
     display_subtotal = invoice.get('total', 0)
     pdf.cell(20, 8, f"{display_subtotal:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R') 
 
     set_font_family('B', 9, False)
     
-    # Extract Extra Fields
     discount_val = invoice.get('discount', 0)
     delivery_val = invoice.get('delivery', 0)
     prev_balance = invoice.get('prev_balance', 0)
@@ -458,29 +429,24 @@ def generate_pdf(invoice, filename):
         show_disc = config.get("show_discount_on_pdf", True)
         show_del = config.get("show_delivery_on_pdf", True)
 
-        # 2. Discount (If enabled and > 0)
         if show_disc and discount_val > 0:
             pdf.set_x(2)
             pdf.cell(45, 6, "Discount:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
             pdf.set_x(58)
             pdf.cell(20, 6, f"-{discount_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
 
-        # 3. Delivery (If enabled and > 0)
         if show_del and delivery_val > 0:
             pdf.set_x(2)
             pdf.cell(45, 6, "Delivery:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
             pdf.set_x(58)
             pdf.cell(20, 6, f"+{delivery_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
 
-        # 4. Previous Dues
         if not hide_prev:
             pdf.set_x(2)
             pdf.cell(45, 6, "Previous Dues:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
             pdf.set_x(58)
             pdf.cell(20, 6, f"{prev_balance:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
 
-        # 5. Total Due (Grand Total)
-        # Math: Subtotal - Disc + Del + Prev
         final_total_due = (display_subtotal - discount_val + delivery_val) + prev_balance
         
         pdf.set_x(2)
@@ -488,13 +454,11 @@ def generate_pdf(invoice, filename):
         pdf.set_x(58)
         pdf.cell(20, 6, f"{final_total_due:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
 
-        # 6. Paid
         pdf.set_x(2)
         pdf.cell(45, 6, "Paid:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
         pdf.set_x(58)
         pdf.cell(20, 6, f"{paid_amount:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
         
-        # 7. Current Balance
         display_remaining = final_total_due - paid_amount
 
     y_pos = pdf.get_y()
@@ -514,17 +478,14 @@ def generate_pdf(invoice, filename):
     footer_text = "Return Processed" if is_return else "Thanks For Your Business!"
     pdf.cell(0, 6, footer_text, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     
-    # Software Footer
     final_footer = set_font_smart(f"Software by {c_name_raw}", 'BI', 9)
     pdf.cell(0, 6, final_footer, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
 
-    # Path Handling with Fallback
     path = os.path.join(DATA_DIR, filename)
     try:
         pdf.output(path)
     except (PermissionError, OSError):
         try:
-            # If the file is open, create a timestamped copy instead of crashing
             base, ext = os.path.splitext(filename)
             new_filename = f"{base}_{int(time.time())}{ext}"
             path = os.path.join(DATA_DIR, new_filename)
@@ -535,7 +496,7 @@ def generate_pdf(invoice, filename):
             
     return path
 
-# --- UPDATED PRINTER FUNCTION (HYBRID) ---
+# --- UPDATED PRINTER FUNCTION ---
 def print_pdf_silently(path):
     if IS_WINDOWS_DESKTOP:
         try:
@@ -623,7 +584,7 @@ def main(page: ft.Page):
     page.overlay.append(global_msg_dlg)
     
     def cleanup_test_data():
-        test_dir = os.path.join(APP_ROOT, "test_data")
+        test_dir = os.path.join(REAL_DATA_DIR, "test_data")
         threading.Thread(target=forced_cleanup, args=(test_dir,), daemon=True).start()
 
     def handle_window_event(e):
@@ -696,20 +657,16 @@ def main(page: ft.Page):
                     recycle_bin.append(item_data)
                     save_data(RECYCLE_BIN_FILE, recycle_bin)
 
-                # --- SMART PDF DELETION LOGIC ---
                 if item_label == "Invoice":
-                    # 1. Try deleting the exact path saved in record
                     if 'pdf_path' in item_data and item_data['pdf_path'] and os.path.exists(item_data['pdf_path']):
                         try: os.remove(item_data['pdf_path'])
                         except: pass
                     
-                    # 2. Try deleting standard filename
                     std_path = os.path.join(DATA_DIR, f"invoice_{item_data.get('id')}.pdf")
                     if os.path.exists(std_path):
                         try: os.remove(std_path)
                         except: pass
                     
-                    # 3. Clean up any timestamped duplicates for this invoice ID
                     try:
                         target_prefix = f"invoice_{item_data.get('id')}_"
                         for f in os.listdir(DATA_DIR):
@@ -717,7 +674,6 @@ def main(page: ft.Page):
                                 try: os.remove(os.path.join(DATA_DIR, f))
                                 except: pass
                     except: pass
-                # --------------------------------
                 
                 if is_return_inv:
                     for r_item in item_data.get('items', []):
@@ -762,12 +718,10 @@ def main(page: ft.Page):
                 if item_data in list_source:
                     list_source.remove(item_data)
                     
-                    # --- RE-INDEXING LOGIC ---
                     if item_label == "Customer":
                         reindex_collection(list_source, "C-")
                     elif item_label == "Product":
                         reindex_collection(list_source, "P-")
-                    # -------------------------
                     
                     save_data(file_path, list_source)
 
@@ -926,8 +880,9 @@ def main(page: ft.Page):
 
         my_list_view = ft.Column(spacing=5)
         
-        rev_text = ft.Text(value="**** PKR", color="white", size=28, weight="bold")
-        profit_text = ft.Text(value="**** PKR", color="white", size=28, weight="bold")
+        # --- CHANGED: Small text size for PKR/Numbers ---
+        rev_text = ft.Text(value="**** PKR", color="white", size=18, weight="bold")
+        profit_text = ft.Text(value="**** PKR", color="white", size=18, weight="bold")
         eye_icon_btn = ft.IconButton(icon=ft.Icons.VISIBILITY, icon_color="white")
 
         def toggle_rev(e):
@@ -946,7 +901,6 @@ def main(page: ft.Page):
                 try:
                     filename = inv.get('pdf_path')
                     if not filename or not os.path.exists(filename):
-                        # Regenerate if missing
                         filename = f"invoice_{inv['id']}.pdf"
                         file_path = generate_pdf(inv, filename)
                     else:
@@ -1085,7 +1039,6 @@ def main(page: ft.Page):
             page.update()
 
         def export_customers_excel(e):
-            # Same export logic as original
             try:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 main_folder_name = f"Export_{timestamp}"
@@ -1156,7 +1109,7 @@ def main(page: ft.Page):
                 )
             ], 
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            wrap=True # Added wrapping for mobile
+            wrap=True
         ))
         
         dashboard_content = ft.Column([
@@ -1167,9 +1120,22 @@ def main(page: ft.Page):
         
         scroll_container = ft.Row([dashboard_content], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
 
+        # --- CHANGED: Layout for Revenue/Profit to prevent eye button disappearing ---
         content_area.controls.append(ft.Row([
-            ft.Container(content=ft.Row([ft.Column([ft.Text("Total Revenue", color="white", size=14), rev_text]), eye_icon_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), bgcolor="#2D5B7A", padding=20, border_radius=10, expand=True),
-            ft.Container(content=ft.Row([ft.Column([ft.Text("Net Profit", color="white", size=14), profit_text]), ft.Icon(ft.Icons.TRENDING_UP, color="white")], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), bgcolor="#2E7D32", padding=20, border_radius=10, expand=True)
+            ft.Container(
+                content=ft.Row([
+                    ft.Column([ft.Text("Total Revenue", color="white", size=14, weight="bold"), rev_text], expand=True), 
+                    eye_icon_btn
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                bgcolor="#2D5B7A", padding=20, border_radius=10, expand=True
+            ),
+            ft.Container(
+                content=ft.Row([
+                    ft.Column([ft.Text("Net Profit", color="white", size=14, weight="bold"), profit_text], expand=True), 
+                    ft.Icon(ft.Icons.TRENDING_UP, color="white")
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
+                bgcolor="#2E7D32", padding=20, border_radius=10, expand=True
+            )
         ], spacing=20))
         
         content_area.controls.append(ft.Row([search_sales], alignment=ft.MainAxisAlignment.START))
@@ -1183,7 +1149,6 @@ def main(page: ft.Page):
             cust['payment_history'] = []
 
         def export_history_excel(e):
-             # Simplified for brevity - logic remains same
              show_msg("Exporting History...", "blue")
 
         history_table = ft.DataTable(
@@ -1315,7 +1280,6 @@ def main(page: ft.Page):
         MIN_TABLE_WIDTH = 800
 
         def get_customer_rows(query):
-            # --- NEW: Sorting customers by ID before filtering to ensure 1,2,3 order ---
             sorted_customers = sorted(customers, key=get_id_sort_key)
             filtered_list = [c for c in sorted_customers if query in c['name'].lower() or query in c.get('phone', '').lower()]
             display_customers = filtered_list[:50] if not query else filtered_list
@@ -1351,7 +1315,6 @@ def main(page: ft.Page):
             cust_list_view.controls.extend(get_customer_rows(query))
             page.update()
 
-        # --- NEW REFRESH FUNCTION FOR MOBILE ---
         def refresh_customer_list(e):
             handle_search_change(None)
             page.update()
@@ -1365,7 +1328,6 @@ def main(page: ft.Page):
             autofocus=focus_search
         )
         
-        # --- ADDED BUTTON: ONLY VISIBLE IF NOT DESKTOP ---
         refresh_btn = ft.IconButton(
             icon=ft.Icons.REFRESH, 
             on_click=refresh_customer_list, 
@@ -1399,8 +1361,10 @@ def main(page: ft.Page):
         
         scroll_container = ft.Row([full_table_container], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
 
-        content_area.controls.append(ft.Row([ft.Text("Customers", size=30, weight="bold"), ft.ElevatedButton(content=ft.Text("Add Customer"), icon=ft.Icons.ADD, on_click=lambda _: show_customer_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
-        # --- ADDED REFRESH BUTTON TO THIS ROW ---
+        # --- CHANGED: Bold button text ---
+        add_cust_btn = ft.ElevatedButton(content=ft.Text("Add Customer", weight="bold"), icon=ft.Icons.ADD, on_click=lambda _: show_customer_dialog())
+
+        content_area.controls.append(ft.Row([ft.Text("Customers", size=30, weight="bold"), add_cust_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
         content_area.controls.append(ft.Row([search_bar, refresh_btn], alignment=ft.MainAxisAlignment.START))
         content_area.controls.append(scroll_container)
 
@@ -1426,8 +1390,14 @@ def main(page: ft.Page):
                 page.update()
                 state["search_query"] = ""; render_tab(1)
             else: show_msg("Name required")
-            
-        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([id_f, name_f, phone_f, addr_f, balance_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
+        
+        # --- CHANGED: Added width restriction to container to fit mobile screen ---
+        content_container = ft.Container(
+            content=ft.Column([id_f, name_f, phone_f, addr_f, balance_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
+            width=300
+        )
+
+        dlg = ft.AlertDialog(title=ft.Text(title, weight="bold"), content=content_container, actions=[ft.TextButton(content=ft.Text("Save", weight="bold"), on_click=save)])
         page.overlay.append(dlg)
         dlg.open = True
         page.update()
@@ -1493,7 +1463,6 @@ def main(page: ft.Page):
             stock_list_view.controls.extend(get_stock_rows(query))
             page.update()
 
-        # --- NEW REFRESH FUNCTION FOR MOBILE ---
         def refresh_stock_list(e):
             handle_search_change(None)
             page.update()
@@ -1507,7 +1476,6 @@ def main(page: ft.Page):
             autofocus=focus_search
         )
         
-        # --- ADDED BUTTON: ONLY VISIBLE IF NOT DESKTOP ---
         refresh_btn = ft.IconButton(
             icon=ft.Icons.REFRESH, 
             on_click=refresh_stock_list, 
@@ -1539,11 +1507,13 @@ def main(page: ft.Page):
         ], width=MIN_TABLE_WIDTH)
         
         scroll_container = ft.Row([full_table_container], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
+        
+        # --- CHANGED: Bold button ---
+        add_prod_btn = ft.ElevatedButton(content=ft.Text("Add Product", weight="bold"), icon=ft.Icons.ADD, on_click=lambda _: show_product_dialog())
 
-        content_area.controls.append(ft.Row([ft.Text("Inventory", size=30, weight="bold"), ft.ElevatedButton(content=ft.Text("Add Product"), icon=ft.Icons.ADD, on_click=lambda _: show_product_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
+        content_area.controls.append(ft.Row([ft.Text("Inventory", size=30, weight="bold"), add_prod_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
         content_area.controls.append(ft.Column([
             warning_control,
-            # --- ADDED REFRESH BUTTON TO THIS ROW ---
             ft.Row([search_bar, refresh_btn], alignment=ft.MainAxisAlignment.START), 
             scroll_container
         ]))
@@ -1576,10 +1546,13 @@ def main(page: ft.Page):
                 state["search_query"] = ""; render_tab(2)
             except ValueError: show_msg("Invalid numeric values", "red")
         
-        dlg = ft.AlertDialog(title=ft.Text(title), content=ft.Column([
-            id_f, name_f, 
-            cost_f, price_f, qty_f
-        ], tight=True, scroll=ft.ScrollMode.ADAPTIVE), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save)])
+        # --- CHANGED: Added width restriction ---
+        content_container = ft.Container(
+            content=ft.Column([id_f, name_f, cost_f, price_f, qty_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
+            width=300
+        )
+
+        dlg = ft.AlertDialog(title=ft.Text(title, weight="bold"), content=content_container, actions=[ft.TextButton(content=ft.Text("Save", weight="bold"), on_click=save)])
         page.overlay.append(dlg)
         dlg.open = True
         page.update()
@@ -1589,15 +1562,9 @@ def main(page: ft.Page):
             content_area.controls.append(ft.Text("Add data first.", color="red")); return
         
         customer_options = [ft.dropdown.Option(key=str(c['id']), text=f"{c['name']}") for c in customers]
-        
         current_cust_val = str(state["billing_customer"]) if state["billing_customer"] else None
 
-        # --- DIFFERENT LAYOUTS FOR MOBILE/DESKTOP ---
-        # Note: Using page.width to determine layout dynamically if not IS_WINDOWS_DESKTOP
-        # But per request, Desktop stays Table, Mobile gets Stacked.
-        
         if IS_WINDOWS_DESKTOP:
-            # Desktop: Row with fixed proportions
             customer_dd = ft.Dropdown(
                 label="Customer", 
                 options=customer_options, 
@@ -1611,20 +1578,20 @@ def main(page: ft.Page):
             product_dd = ft.Dropdown(
                 label="Product", 
                 options=product_options, 
-                width=450, # Fixed width instead of expand
+                width=450, 
                 value=current_prod_val
             )
-            qty_f = ft.TextField(label="Qty", width=100, value="1", text_align="center") # Small fixed width
+            qty_f = ft.TextField(label="Qty", width=100, value="1", text_align="center") 
             
             input_row = ft.Row([product_dd, qty_f], alignment=ft.MainAxisAlignment.START, spacing=10)
             
-            add_btn = ft.ElevatedButton(content=ft.Text("Add Item"), on_click=lambda e: add_i(e), width=150, bgcolor="blue", color="white")
-            clear_btn = ft.ElevatedButton(content=ft.Text("Clear"), icon=ft.Icons.DELETE_FOREVER, on_click=lambda e: clear_all_billing(e), width=150, bgcolor="red", color="white")
+            add_btn = ft.ElevatedButton(content=ft.Text("Add Item", weight="bold"), on_click=lambda e: add_i(e), width=150, bgcolor="blue", color="white")
+            clear_btn = ft.ElevatedButton(content=ft.Text("Clear", weight="bold"), icon=ft.Icons.DELETE_FOREVER, on_click=lambda e: clear_all_billing(e), width=150, bgcolor="red", color="white")
             
             action_row = ft.Row([add_btn, clear_btn], alignment=ft.MainAxisAlignment.START, spacing=10)
 
         else:
-            # Mobile: Stacked & Expanded
+            # Mobile
             customer_dd = ft.Dropdown(
                 label="Customer", 
                 options=customer_options, 
@@ -1642,15 +1609,15 @@ def main(page: ft.Page):
                 value=current_prod_val
             )
             
-            # FIXED: New Mobile Layout: [Qty] - [Add] - [Clear] all in one row
             qty_f = ft.TextField(label="Qty", value="1", width=70, text_size=12, content_padding=10)
-            add_btn = ft.ElevatedButton(content=ft.Text("Add", size=12), on_click=lambda e: add_i(e), expand=True, bgcolor="blue", color="white", style=ft.ButtonStyle(padding=5))
-            clear_btn = ft.ElevatedButton(content=ft.Text("Clr", size=12), on_click=lambda e: clear_all_billing(e), width=60, bgcolor="red", color="white", style=ft.ButtonStyle(padding=5))
             
-            # No separate input row for qty in mobile, it's combined below
+            # --- CHANGED: Add and Clear buttons same size (expand=True) ---
+            add_btn = ft.ElevatedButton(content=ft.Text("Add", size=12, weight="bold"), on_click=lambda e: add_i(e), expand=True, bgcolor="blue", color="white", style=ft.ButtonStyle(padding=5))
+            clear_btn = ft.ElevatedButton(content=ft.Text("Clear", size=12, weight="bold"), on_click=lambda e: clear_all_billing(e), expand=True, bgcolor="red", color="white", style=ft.ButtonStyle(padding=5))
+            
             input_row = ft.Container() 
             
-            # The action row now contains the Qty field + Buttons
+            # Action row now splits space evenly between Add/Clear after the Qty
             action_row = ft.Row([qty_f, add_btn, clear_btn], spacing=5)
 
         def on_cust_change(e):
@@ -1674,14 +1641,12 @@ def main(page: ft.Page):
             state["billing_product"] = None
             render_tab(3)
 
-        # --- BILLING TABLE LOGIC ---
         if IS_WINDOWS_DESKTOP:
-             # DESKTOP: Use standard DataTable which packs columns better
             rows = []
             for idx, i in enumerate(state["billing_items"]):
                 line_total = i['qty'] * i['price']
                 rows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(i['name'])), # No expand, let it size naturally or wrap
+                    ft.DataCell(ft.Text(i['name'])), 
                     ft.DataCell(ft.Text(f"{i['price']:.0f}")),
                     ft.DataCell(ft.Text(str(i['qty']))),
                     ft.DataCell(ft.Text(f"{line_total:.0f}")),
@@ -1704,10 +1669,8 @@ def main(page: ft.Page):
             ], scroll=ft.ScrollMode.ADAPTIVE)
 
         else:
-            # MOBILE: Use the Custom Stacked List (Keep as is)
             items_list_view = ft.Column(spacing=0)
             
-            # Header
             header_row = ft.Container(
                 content=ft.Row([
                     ft.Text("Item", weight="bold", expand=True),
@@ -1721,7 +1684,6 @@ def main(page: ft.Page):
             )
             items_list_view.controls.append(header_row)
 
-            # Data Rows
             for idx, i in enumerate(state["billing_items"]):
                 line_total = i['qty'] * i['price']
                 item_row = ft.Container(
@@ -1738,8 +1700,6 @@ def main(page: ft.Page):
                 items_list_view.controls.append(item_row)
                 
             table_container = ft.Container(content=items_list_view, padding=ft.padding.only(top=10, bottom=10))
-
-        # ----------------------------------------------------
         
         raw_total = sum(i['qty']*i['price'] for i in state['billing_items'])
         display_total = raw_total
@@ -1804,7 +1764,6 @@ def main(page: ft.Page):
             
             prev_balance = cust.get('balance', 0)
             
-            # --- UI Elements for Discount/Delivery ---
             paid_input = ft.TextField(label="Paid Amount", value="0", width=150)
             disc_input = ft.TextField(label="Discount", value="0", width=150)
             del_input = ft.TextField(label="Delivery Charges", value="0", width=150)
@@ -1812,7 +1771,6 @@ def main(page: ft.Page):
             new_bal_text = ft.Text(value=str(prev_balance + total_bill), size=16, weight="bold")
             total_due_text = ft.Text(value=str(prev_balance + total_bill), size=16, weight="bold", color="blue")
 
-            # --- DYNAMIC CALCULATION LOGIC ---
             def calculate_updates(e):
                 try:
                     p = float(paid_input.value) if paid_input.value else 0.0
@@ -1821,14 +1779,8 @@ def main(page: ft.Page):
                 except ValueError:
                     p, d, dc = 0.0, 0.0, 0.0
                 
-                # Math:
-                # 1. Net Bill = Items - Discount + Delivery
                 net_bill = total_bill - d + dc
-                
-                # 2. Total Due = Net Bill + Previous Balance
                 total_due = net_bill + prev_balance
-                
-                # 3. New Balance = Total Due - Paid
                 new_balance = total_due - p
                 
                 total_due_text.value = f"{total_due:.2f} PKR"
@@ -1839,7 +1791,6 @@ def main(page: ft.Page):
             disc_input.on_change = calculate_updates
             del_input.on_change = calculate_updates
             
-            # Run once to set initial values
             calculate_updates(None)
 
             preview_items = ft.DataTable(
@@ -1882,8 +1833,6 @@ def main(page: ft.Page):
                         next_id_num = max(sales_ids) + 1 if sales_ids else 1
                         new_inv_id = f"{next_id_num:02d}"
 
-                        # --- PDF SAVE LOGIC ---
-                        # Try standard name first to avoid clutter
                         base_filename = f"invoice_{new_inv_id}.pdf"
                         
                         inv = {
@@ -1902,7 +1851,6 @@ def main(page: ft.Page):
                             'new_balance': final_new_balance
                         }
                         
-                        # Generate PDF and get actual path used (might be timestamped if locked)
                         saved_pdf_path = generate_pdf(inv, base_filename)
                         if saved_pdf_path:
                             inv['pdf_path'] = saved_pdf_path
@@ -1983,7 +1931,7 @@ def main(page: ft.Page):
                     
                 ], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
                 actions=[
-                    ft.ElevatedButton(content=ft.Text("Finalize Invoice"), icon=ft.Icons.CHECK, on_click=finalize_and_print, bgcolor="green", color="white"),
+                    ft.ElevatedButton(content=ft.Text("Finalize Invoice", weight="bold"), icon=ft.Icons.CHECK, on_click=finalize_and_print, bgcolor="green", color="white"),
                     ft.TextButton(content=ft.Text("Cancel"), on_click=cancel_dlg)
                 ]
             )
@@ -1992,10 +1940,6 @@ def main(page: ft.Page):
             page.update()
             
         if IS_WINDOWS_DESKTOP:
-            # Desktop Structure: 
-            # Row 1: Customer
-            # Row 2: Product + Qty
-            # Row 3: Add + Clear
             content_area.controls.extend([
                 ft.Text("New Invoice", size=30, weight="bold"), 
                 ft.Row([customer_dd]),
@@ -2003,16 +1947,11 @@ def main(page: ft.Page):
                 action_row, 
                 table_container, 
                 total_txt, 
-                # FIX APPLIED HERE: Replaced 'use_container_width=True' with 'expand=True' inside a Row
                 ft.Row([
-                    ft.ElevatedButton(content=ft.Text("Finalize & Preview"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview, expand=True)
+                    ft.ElevatedButton(content=ft.Text("Finalize & Preview", weight="bold"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview, expand=True)
                 ])
             ])
         else:
-            # Mobile Structure:
-            # 1. Customer Dropdown
-            # 2. Product Dropdown
-            # 3. Action Row (Qty + Add + Clear)
             content_area.controls.extend([
                 ft.Text("New Invoice", size=30, weight="bold"), 
                 customer_dd,
@@ -2021,7 +1960,7 @@ def main(page: ft.Page):
                 table_container, 
                 total_txt, 
                 ft.Row([
-                    ft.ElevatedButton(content=ft.Text("Finalize & Preview"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview, expand=True)
+                    ft.ElevatedButton(content=ft.Text("Finalize & Preview", weight="bold"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_print_preview, expand=True)
                 ])
             ])
 
@@ -2064,7 +2003,7 @@ def main(page: ft.Page):
                         s_disc,
                         s_del
                     ], tight=True, spacing=20),
-                    width=400
+                    width=300
                 ),
                 actions=[
                     ft.ElevatedButton(content=ft.Text("Save Changes"), on_click=save_prefs, bgcolor="blue", color="white"),
@@ -2099,10 +2038,13 @@ def main(page: ft.Page):
 
             info_dlg = ft.AlertDialog(
                 title=ft.Text("Edit Company Details"),
-                content=ft.Column([
-                    ft.Text("These details will appear on your printed invoices."),
-                    c_name_f, c_addr_f, c_phone_f
-                ], tight=True),
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text("These details will appear on your printed invoices."),
+                        c_name_f, c_addr_f, c_phone_f
+                    ], tight=True),
+                    width=300
+                ),
                 actions=[
                     ft.ElevatedButton(content=ft.Text("Save Info"), on_click=save_info, bgcolor="blue", color="white"),
                     ft.TextButton(content=ft.Text("Cancel"), on_click=close_dlg)
@@ -2147,7 +2089,8 @@ def main(page: ft.Page):
                     page.update()
                     show_msg("Password Updated Successfully", "green")
             
-            dlg = ft.AlertDialog(title=ft.Text("Change Admin Password"), content=ft.Column([curr_user_input, curr_pass, new_pass, conf_pass], tight=True), actions=[ft.TextButton(content=ft.Text("Save"), on_click=save_new_pass)])
+            content_container = ft.Container(content=ft.Column([curr_user_input, curr_pass, new_pass, conf_pass], tight=True), width=300)
+            dlg = ft.AlertDialog(title=ft.Text("Change Admin Password"), content=content_container, actions=[ft.TextButton(content=ft.Text("Save"), on_click=save_new_pass)])
             page.overlay.append(dlg)
             dlg.open = True
             page.update()
@@ -2157,36 +2100,20 @@ def main(page: ft.Page):
             settings_dynamic_area.controls.append(ft.Row([ft.Text(f"Recycle Bin: {item_type_filter}", size=20, weight="bold"), ft.ElevatedButton(content=ft.Text("Empty All Trash"), icon=ft.Icons.DELETE_SWEEP, icon_color="red", on_click=clear_all_trash)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
             
             def restore(item):
-                # --- MODIFIED RESTORE LOGIC ---
-                # Checks for duplicate name first. If exists, appends (Restored).
-                # Then adds to list and re-indexes to ensure ID continuity.
-                
                 if item['item_type'] == "Customer": 
-                    # 1. Check Name
                     duplicate = next((c for c in customers if c['name'] == item['name']), None)
                     if duplicate:
                         item['name'] = f"{item['name']} (Restored)"
-                    
-                    # 2. Add to list
                     customers.append(item)
-                    
-                    # 3. Re-Index IDs (C-1, C-2...) to fill gaps/end
                     reindex_collection(customers, "C-")
-                    
                     save_data(CUSTOMERS_FILE, customers)
 
-                elif item['item_type'] == "Product": # Inventory Logic
-                    # 1. Check Name
+                elif item['item_type'] == "Product": 
                     duplicate = next((p for p in inventory if p['name'] == item['name']), None)
                     if duplicate:
                         item['name'] = f"{item['name']} (Restored)"
-
-                    # 2. Add to list
                     inventory.append(item)
-
-                    # 3. Re-Index IDs (P-1, P-2...)
                     reindex_collection(inventory, "P-")
-                    
                     save_data(INVENTORY_FILE, inventory)
 
                 elif item['item_type'] == "Invoice":
@@ -2280,14 +2207,14 @@ def main(page: ft.Page):
 
         content_area.controls.extend([
             ft.Row([
-                ft.ElevatedButton(content=ft.Text("Company Info"), icon=ft.Icons.STORE, on_click=show_company_info_dialog, bgcolor="orange", color="white"),
-                ft.ElevatedButton(content=ft.Text("PDF Preferences"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_pdf_preferences),
-                ft.ElevatedButton(content=ft.Text("Customer Trash"), icon=ft.Icons.PERSON_REMOVE, on_click=lambda _: show_specific_trash("Customer")), 
-                ft.ElevatedButton(content=ft.Text("Sales Trash"), icon=ft.Icons.RECEIPT_LONG, on_click=lambda _: show_specific_trash("Invoice")), 
+                ft.ElevatedButton(content=ft.Text("Company Info", weight="bold"), icon=ft.Icons.STORE, on_click=show_company_info_dialog, bgcolor="orange", color="white"),
+                ft.ElevatedButton(content=ft.Text("PDF Preferences", weight="bold"), icon=ft.Icons.PICTURE_AS_PDF, on_click=show_pdf_preferences),
+                ft.ElevatedButton(content=ft.Text("Customer Trash", weight="bold"), icon=ft.Icons.PERSON_REMOVE, on_click=lambda _: show_specific_trash("Customer")), 
+                ft.ElevatedButton(content=ft.Text("Sales Trash", weight="bold"), icon=ft.Icons.RECEIPT_LONG, on_click=lambda _: show_specific_trash("Invoice")), 
             ], wrap=True, run_spacing=10, spacing=10),
             ft.Row([
-                ft.ElevatedButton(content=ft.Text("Change Password"), icon=ft.Icons.LOCK_RESET, on_click=change_password_dialog),
-                ft.ElevatedButton(content=ft.Text("Sync Local Data to Database"), icon=ft.Icons.CLOUD_UPLOAD, on_click=sync_local_to_cloud, bgcolor="teal", color="white")
+                ft.ElevatedButton(content=ft.Text("Change Password", weight="bold"), icon=ft.Icons.LOCK_RESET, on_click=change_password_dialog),
+                ft.ElevatedButton(content=ft.Text("Sync Local Data to Database", weight="bold"), icon=ft.Icons.CLOUD_UPLOAD, on_click=sync_local_to_cloud, bgcolor="teal", color="white")
             ], wrap=True, run_spacing=10, spacing=10),
             ft.Divider(), 
             settings_dynamic_area,
@@ -2437,9 +2364,10 @@ def main(page: ft.Page):
             create_dlg.open = False
             page.update()
 
+        content_container = ft.Container(content=ft.Column([new_user, new_pass, conf_pass], tight=True, scroll=ft.ScrollMode.ADAPTIVE), width=300)
         create_dlg = ft.AlertDialog(
             title=ft.Text("Create New Admin Account"),
-            content=ft.Column([new_user, new_pass, conf_pass], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
+            content=content_container,
             actions=[ft.TextButton(content=ft.Text("Create"), on_click=save_new_admin), ft.TextButton(content=ft.Text("Cancel"), on_click=close_dlg)]
         )
         page.overlay.append(create_dlg)
@@ -2448,7 +2376,7 @@ def main(page: ft.Page):
 
     def start_test_mode(e):
         global DATA_DIR, INVENTORY_FILE, INVOICES_JSON, CUSTOMERS_FILE, RECYCLE_BIN_FILE, RETURNS_FILE, CONFIG_FILE, config, CURRENT_ADMIN
-        test_dir = os.path.join(APP_ROOT, "test_data")
+        test_dir = os.path.join(REAL_DATA_DIR, "test_data")
         CURRENT_ADMIN = "test_user"
         if not os.path.exists(test_dir):
             try: os.makedirs(test_dir)
