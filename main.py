@@ -256,245 +256,250 @@ def is_urdu(text):
     return False
 
 def generate_pdf(invoice, filename):
-    is_return = invoice.get('total', 0) < 0
-    pdf = FPDF(format=(80, 210))
-    pdf.set_margins(2, 0, 2) 
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=False)
-    
-    font_reg = os.path.join(ASSETS_DIR, "NotoSansArabic-Regular.ttf")
-    font_bold = os.path.join(ASSETS_DIR, "NotoSansArabic-Bold.ttf")
-    
-    if not os.path.exists(font_reg):
-        font_reg = os.path.join(ASSETS_DIR, "UrduFont.ttf")
-    if not os.path.exists(font_bold):
-        font_bold = font_reg
-
-    has_custom_font = os.path.exists(font_reg)
-    
-    if has_custom_font:
-        try:
-            pdf.add_font('UrduFont', '', fname=font_reg)
-            if os.path.exists(font_bold):
-                pdf.add_font('UrduFont', 'B', fname=font_bold)
-            else:
-                pdf.add_font('UrduFont', 'B', fname=font_reg)
-            pdf.add_font('UrduFont', 'I', fname=font_reg)
-            pdf.add_font('UrduFont', 'BI', fname=font_bold if os.path.exists(font_bold) else font_reg)
-        except Exception as e:
-            print(f"Font loading error: {e}")
-
-    # Helper to switch fonts smartly
-    def set_font_smart(text, style='', size=10):
-        if is_urdu(text) and has_custom_font:
-            pdf.set_font("UrduFont", style, size)
-            return process_text(text)
-        else:
-            pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
-            return text
-
-    def set_font_family(style='', size=10, use_urdu=False):
-        if use_urdu and has_custom_font:
-            pdf.set_font("UrduFont", style, size)
-        else:
-            pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
-
-    c_info = config.get("company_info", {})
-    
-    # --- HEADER ---
-    c_name_raw = c_info.get("name", "Amin & Sons")
-    final_c_name = set_font_smart(c_name_raw, 'B', 20)
-    
-    if is_return:
-        set_font_family('B', 16, False)
-        pdf.cell(0, 8, "RETURN RECEIPT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-        set_font_family('B', 10, False)
-        pdf.cell(0, 5, "(Credit Note)", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    else:
-        pdf.cell(0, 10, final_c_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    
-    c_address_raw = c_info.get("address", "26EB near Sukhbias pull, Pakpattan")
-    final_c_addr = set_font_smart(c_address_raw, '', 9)
-    pdf.cell(0, 5, final_c_addr, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    
-    c_phone = process_text(c_info.get("phone", "03148756922"))
-    set_font_family('', 9, False) 
-    pdf.cell(0, 5, c_phone, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    pdf.ln(4)
-    
-    # Inv No
-    set_font_family('B', 11, False) 
-    doc_label = "Ret #" if is_return else "Inv #"
-    pdf.cell(0, 6, f"{doc_label}: {invoice.get('id', '01')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    
-    full_date_str = invoice.get('date', 'N/A')
-    date_parts = full_date_str.split()
-    invoice_date = date_parts[0] if len(date_parts) > 0 else "N/A"
-    
-    invoice_time = "N/A"
-    if len(date_parts) > 1:
-        try:
-            raw_time = " ".join(date_parts[1:])
-            time_obj = datetime.strptime(raw_time, "%H:%M") if "AM" not in raw_time and "PM" not in raw_time else datetime.strptime(raw_time, "%I:%M %p")
-            invoice_time = time_obj.strftime("%I:%M %p")
-        except:
-            invoice_time = " ".join(date_parts[1:])
-
-    pdf.set_x(2) 
-    set_font_family('B', 9, False)
-    pdf.write(6, f"Date: {invoice_date}")
-    pdf.set_x(45) 
-    pdf.write(6, f"Time: {invoice_time}")
-    pdf.ln(7)
-
-    # Customer
-    pdf.set_x(2)
-    set_font_family('B', 10, False)
-    pdf.write(6, "Customer: ")
-    indent_x = pdf.get_x()
-    
-    cust_raw = invoice.get('customer', 'Unknown')
-    final_cust = set_font_smart(cust_raw, '', 11)
-    
-    pdf.set_left_margin(indent_x)
-    pdf.write(6, final_cust)
-    pdf.set_left_margin(2) 
-    pdf.ln(6)
-
-    addr_raw = invoice.get('customer_address', '')
-    if addr_raw:
-        final_addr = set_font_smart(addr_raw, '', 10)
-        pdf.cell(0, 6, f"({final_addr})", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    
-    pdf.ln(2)
-    y_pos = pdf.get_y()
-    pdf.set_dash_pattern(dash=1, gap=1)
-    pdf.line(2, y_pos, 78, y_pos) 
-    pdf.set_dash_pattern() 
-    
-    # Table Headers
-    set_font_family('B', 9, False)
-    pdf.set_x(2)
-    pdf.cell(36, 8, "Item", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-    pdf.cell(10, 8, "Qty", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-    pdf.cell(14, 8, "Rate", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-    pdf.cell(16, 8, "Total", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-    
-    # Items
-    total_qty = 0
-    for item in invoice.get('items', []):
-        name_raw = item.get('name', 'N/A')
-        price = item.get('price', 0)
-        qty = item.get('qty', 0)
-        total_qty += qty
-        
-        pdf.set_x(2)
-        final_item_name = set_font_smart(name_raw, 'B', 10)
-        if len(final_item_name) > 20: final_item_name = final_item_name[:20]
-
-        pdf.cell(36, 8, final_item_name, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
-        set_font_family('B', 10, False)
-        pdf.cell(10, 8, str(qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-        pdf.cell(14, 8, f"{price:.0f}", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-        line_total = qty * price
-        pdf.cell(16, 8, f"{line_total:.0f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-    
-    pdf.ln(2)
-    y_pos = pdf.get_y()
-    pdf.set_dash_pattern(dash=1, gap=1)
-    pdf.line(2, y_pos, 78, y_pos)
-    pdf.set_dash_pattern() 
-    
-    # --- TOTALS SECTION ---
-    pdf.set_x(2)
-    set_font_family('B', 12, False) 
-    total_label = "REFUND TOTAL:" if is_return else "TOTAL:"
-    pdf.cell(30, 8, total_label, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
-    
-    set_font_family('B', 11, False) 
-    pdf.cell(12, 8, str(total_qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C') 
-    pdf.set_x(58) 
-    display_subtotal = invoice.get('total', 0)
-    pdf.cell(20, 8, f"{display_subtotal:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R') 
-
-    set_font_family('B', 9, False)
-    
-    discount_val = invoice.get('discount', 0)
-    delivery_val = invoice.get('delivery', 0)
-    prev_balance = invoice.get('prev_balance', 0)
-    paid_amount = invoice.get('paid', 0)
-    
-    if not is_return:
-        hide_prev = config.get("hide_prev_dues_on_pdf", False)
-        show_disc = config.get("show_discount_on_pdf", True)
-        show_del = config.get("show_delivery_on_pdf", True)
-
-        if show_disc and discount_val > 0:
-            pdf.set_x(2)
-            pdf.cell(45, 6, "Discount:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-            pdf.set_x(58)
-            pdf.cell(20, 6, f"-{discount_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-
-        if show_del and delivery_val > 0:
-            pdf.set_x(2)
-            pdf.cell(45, 6, "Delivery:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-            pdf.set_x(58)
-            pdf.cell(20, 6, f"+{delivery_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-
-        if not hide_prev:
-            pdf.set_x(2)
-            pdf.cell(45, 6, "Previous Dues:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-            pdf.set_x(58)
-            pdf.cell(20, 6, f"{prev_balance:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-
-        final_total_due = (display_subtotal - discount_val + delivery_val) + prev_balance
-        
-        pdf.set_x(2)
-        pdf.cell(45, 6, "Total Due:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-        pdf.set_x(58)
-        pdf.cell(20, 6, f"{final_total_due:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-
-        pdf.set_x(2)
-        pdf.cell(45, 6, "Paid:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-        pdf.set_x(58)
-        pdf.cell(20, 6, f"{paid_amount:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-        
-        display_remaining = final_total_due - paid_amount
-
-    y_pos = pdf.get_y()
-    pdf.line(48, y_pos, 78, y_pos) 
-    pdf.ln(1)
-
-    set_font_family('B', 10, False)
-    pdf.set_x(2)
-    bal_label = "Current Balance:"
-    pdf.cell(45, 7, bal_label, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-    
-    pdf.set_x(58)
-    pdf.cell(20, 7, f"{display_remaining:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-
-    set_font_family('BI', 9, False) 
-    pdf.ln(5)
-    footer_text = "Return Processed" if is_return else "Thanks For Your Business!"
-    pdf.cell(0, 6, footer_text, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-    
-    final_footer = set_font_smart(f"Software by {c_name_raw}", 'BI', 9)
-    pdf.cell(0, 6, final_footer, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-
-    path = os.path.join(DATA_DIR, filename)
     try:
-        pdf.output(path)
-    except (PermissionError, OSError):
-        try:
-            base, ext = os.path.splitext(filename)
-            new_filename = f"{base}_{int(time.time())}{ext}"
-            path = os.path.join(DATA_DIR, new_filename)
-            pdf.output(path)
-        except Exception as e:
-            print(f"Failed to generate PDF fallback: {e}")
-            return None
+        is_return = invoice.get('total', 0) < 0
+        pdf = FPDF(format=(80, 210))
+        pdf.set_margins(2, 0, 2) 
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=False)
+        
+        font_reg = os.path.join(ASSETS_DIR, "NotoSansArabic-Regular.ttf")
+        font_bold = os.path.join(ASSETS_DIR, "NotoSansArabic-Bold.ttf")
+        
+        if not os.path.exists(font_reg):
+            font_reg = os.path.join(ASSETS_DIR, "UrduFont.ttf")
+        if not os.path.exists(font_bold):
+            font_bold = font_reg
+
+        has_custom_font = os.path.exists(font_reg)
+        
+        if has_custom_font:
+            try:
+                pdf.add_font('UrduFont', '', fname=font_reg)
+                if os.path.exists(font_bold):
+                    pdf.add_font('UrduFont', 'B', fname=font_bold)
+                else:
+                    pdf.add_font('UrduFont', 'B', fname=font_reg)
+                pdf.add_font('UrduFont', 'I', fname=font_reg)
+                pdf.add_font('UrduFont', 'BI', fname=font_bold if os.path.exists(font_bold) else font_reg)
+            except Exception as e:
+                print(f"Font loading error: {e}")
+
+        # --- HELPER: FORCE BOLD FOR URDU ---
+        def set_font_smart(text, style='', size=10):
+            if is_urdu(text) and has_custom_font:
+                # FORCE BOLD ('B') for Urdu to ensure visibility
+                pdf.set_font("UrduFont", 'B', size)
+                return process_text(text)
+            else:
+                pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
+                return text
+
+        def set_font_family(style='', size=10, use_urdu=False):
+            if use_urdu and has_custom_font:
+                pdf.set_font("UrduFont", 'B', size) # Force Bold
+            else:
+                pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
+
+        c_info = config.get("company_info", {})
+        
+        # --- HEADER ---
+        c_name_raw = c_info.get("name", "Amin & Sons")
+        final_c_name = set_font_smart(c_name_raw, 'B', 20)
+        
+        if is_return:
+            set_font_family('B', 16, False)
+            pdf.cell(0, 8, "RETURN RECEIPT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+            set_font_family('B', 10, False)
+            pdf.cell(0, 5, "(Credit Note)", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        else:
+            pdf.cell(0, 10, final_c_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        
+        c_address_raw = c_info.get("address", "26EB near Sukhbias pull, Pakpattan")
+        final_c_addr = set_font_smart(c_address_raw, '', 9)
+        pdf.cell(0, 5, final_c_addr, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        
+        c_phone = process_text(c_info.get("phone", "03148756922"))
+        set_font_family('', 9, False) 
+        pdf.cell(0, 5, c_phone, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        pdf.ln(4)
+        
+        # Inv No
+        set_font_family('B', 11, False) 
+        doc_label = "Ret #" if is_return else "Inv #"
+        pdf.cell(0, 6, f"{doc_label}: {invoice.get('id', '01')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        
+        full_date_str = invoice.get('date', 'N/A')
+        date_parts = full_date_str.split()
+        invoice_date = date_parts[0] if len(date_parts) > 0 else "N/A"
+        
+        invoice_time = "N/A"
+        if len(date_parts) > 1:
+            try:
+                raw_time = " ".join(date_parts[1:])
+                time_obj = datetime.strptime(raw_time, "%H:%M") if "AM" not in raw_time and "PM" not in raw_time else datetime.strptime(raw_time, "%I:%M %p")
+                invoice_time = time_obj.strftime("%I:%M %p")
+            except:
+                invoice_time = " ".join(date_parts[1:])
+
+        pdf.set_x(2) 
+        set_font_family('B', 9, False)
+        pdf.write(6, f"Date: {invoice_date}")
+        pdf.set_x(45) 
+        pdf.write(6, f"Time: {invoice_time}")
+        pdf.ln(7)
+
+        # Customer
+        pdf.set_x(2)
+        set_font_family('B', 10, False)
+        pdf.write(6, "Customer: ")
+        indent_x = pdf.get_x()
+        
+        cust_raw = invoice.get('customer', 'Unknown')
+        final_cust = set_font_smart(cust_raw, 'B', 11) # BOLD
+        
+        pdf.set_left_margin(indent_x)
+        pdf.write(6, final_cust)
+        pdf.set_left_margin(2) 
+        pdf.ln(6)
+
+        addr_raw = invoice.get('customer_address', '')
+        if addr_raw:
+            final_addr = set_font_smart(addr_raw, '', 10)
+            pdf.cell(0, 6, f"({final_addr})", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        
+        pdf.ln(2)
+        y_pos = pdf.get_y()
+        pdf.set_dash_pattern(dash=1, gap=1)
+        pdf.line(2, y_pos, 78, y_pos) 
+        pdf.set_dash_pattern() 
+        
+        # Table Headers
+        set_font_family('B', 9, False)
+        pdf.set_x(2)
+        pdf.cell(36, 8, "Item", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+        pdf.cell(10, 8, "Qty", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+        pdf.cell(14, 8, "Rate", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+        pdf.cell(16, 8, "Total", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+        
+        # Items
+        total_qty = 0
+        for item in invoice.get('items', []):
+            name_raw = item.get('name', 'N/A')
+            price = item.get('price', 0)
+            qty = item.get('qty', 0)
+            total_qty += qty
             
-    return path
+            pdf.set_x(2)
+            final_item_name = set_font_smart(name_raw, 'B', 10) # BOLD
+            if len(final_item_name) > 20: final_item_name = final_item_name[:20]
+
+            pdf.cell(36, 8, final_item_name, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
+            set_font_family('B', 10, False)
+            pdf.cell(10, 8, str(qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+            pdf.cell(14, 8, f"{price:.0f}", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+            line_total = qty * price
+            pdf.cell(16, 8, f"{line_total:.0f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+        
+        pdf.ln(2)
+        y_pos = pdf.get_y()
+        pdf.set_dash_pattern(dash=1, gap=1)
+        pdf.line(2, y_pos, 78, y_pos)
+        pdf.set_dash_pattern() 
+        
+        # --- TOTALS SECTION ---
+        pdf.set_x(2)
+        set_font_family('B', 12, False) 
+        total_label = "REFUND TOTAL:" if is_return else "TOTAL:"
+        pdf.cell(30, 8, total_label, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
+        
+        set_font_family('B', 11, False) 
+        pdf.cell(12, 8, str(total_qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C') 
+        pdf.set_x(58) 
+        display_subtotal = invoice.get('total', 0)
+        pdf.cell(20, 8, f"{display_subtotal:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R') 
+
+        set_font_family('B', 9, False)
+        
+        discount_val = invoice.get('discount', 0)
+        delivery_val = invoice.get('delivery', 0)
+        prev_balance = invoice.get('prev_balance', 0)
+        paid_amount = invoice.get('paid', 0)
+        
+        if not is_return:
+            hide_prev = config.get("hide_prev_dues_on_pdf", False)
+            show_disc = config.get("show_discount_on_pdf", True)
+            show_del = config.get("show_delivery_on_pdf", True)
+
+            if show_disc and discount_val > 0:
+                pdf.set_x(2)
+                pdf.cell(45, 6, "Discount:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+                pdf.set_x(58)
+                pdf.cell(20, 6, f"-{discount_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+
+            if show_del and delivery_val > 0:
+                pdf.set_x(2)
+                pdf.cell(45, 6, "Delivery:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+                pdf.set_x(58)
+                pdf.cell(20, 6, f"+{delivery_val:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+
+            if not hide_prev:
+                pdf.set_x(2)
+                pdf.cell(45, 6, "Previous Dues:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+                pdf.set_x(58)
+                pdf.cell(20, 6, f"{prev_balance:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+
+            final_total_due = (display_subtotal - discount_val + delivery_val) + prev_balance
+            
+            pdf.set_x(2)
+            pdf.cell(45, 6, "Total Due:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+            pdf.set_x(58)
+            pdf.cell(20, 6, f"{final_total_due:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+
+            pdf.set_x(2)
+            pdf.cell(45, 6, "Paid:", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+            pdf.set_x(58)
+            pdf.cell(20, 6, f"{paid_amount:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            
+            display_remaining = final_total_due - paid_amount
+
+        y_pos = pdf.get_y()
+        pdf.line(48, y_pos, 78, y_pos) 
+        pdf.ln(1)
+
+        set_font_family('B', 10, False)
+        pdf.set_x(2)
+        bal_label = "Current Balance:"
+        pdf.cell(45, 7, bal_label, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+        
+        pdf.set_x(58)
+        pdf.cell(20, 7, f"{display_remaining:.2f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+
+        set_font_family('BI', 9, False) 
+        pdf.ln(5)
+        footer_text = "Return Processed" if is_return else "Thanks For Your Business!"
+        pdf.cell(0, 6, footer_text, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        
+        final_footer = set_font_smart(f"Software by {c_name_raw}", 'BI', 9)
+        pdf.cell(0, 6, final_footer, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+
+        path = os.path.join(DATA_DIR, filename)
+        try:
+            pdf.output(path)
+        except (PermissionError, OSError):
+            try:
+                base, ext = os.path.splitext(filename)
+                new_filename = f"{base}_{int(time.time())}{ext}"
+                path = os.path.join(DATA_DIR, new_filename)
+                pdf.output(path)
+            except Exception as e:
+                print(f"Failed to generate PDF fallback: {e}")
+                return None
+                
+        return path
+    except Exception as e:
+        print(f"PDF Gen Critical Error: {e}")
+        return None
 
 # --- UPDATED PRINTER FUNCTION ---
 def print_pdf_silently(path):
@@ -564,14 +569,7 @@ def main(page: ft.Page):
         "last_layout_mode": None 
     }
     
-    loading_dlg = ft.AlertDialog(
-        modal=True,
-        content=ft.Row([ft.ProgressRing(), ft.Text("Processing... Please Wait")], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
-        actions=[],
-    )
-    page.overlay.clear()
-    page.overlay.append(loading_dlg)
-    
+    # --- NON-BLOCKING DIALOG SETUP ---
     def close_msg_dlg(e):
         global_msg_dlg.open = False
         page.update()
@@ -583,6 +581,14 @@ def main(page: ft.Page):
     )
     page.overlay.append(global_msg_dlg)
     
+    # Use this for non-blocking notifications
+    def show_msg(text, color="red"):
+        title_text = "Information" if color in ["green", "blue"] else "Warning/Error"
+        global_msg_dlg.title = ft.Text(title_text)
+        global_msg_dlg.content = ft.Text(text, size=16, color=color, weight="bold")
+        global_msg_dlg.open = True
+        page.update()
+
     def cleanup_test_data():
         test_dir = os.path.join(REAL_DATA_DIR, "test_data")
         threading.Thread(target=forced_cleanup, args=(test_dir,), daemon=True).start()
@@ -596,12 +602,48 @@ def main(page: ft.Page):
     page.window_prevent_close = True
     page.on_window_event = handle_window_event
 
-    def show_msg(text, color="red"):
-        title_text = "Information" if color in ["green", "blue"] else "Warning/Error"
-        global_msg_dlg.title = ft.Text(title_text)
-        global_msg_dlg.content = ft.Text(text, size=16, color=color, weight="bold")
-        global_msg_dlg.open = True
-        page.update()
+    # --- SHARED BACKGROUND TASKS (AVAILABLE TO ALL TABS) ---
+    def print_invoice_directly(inv):
+        # BACKGROUND TASK - NO BLOCKING DIALOG
+        show_msg(f"Background: Sending Invoice #{inv['id']} to Printer...", "blue")
+        def task():
+            try:
+                filename = inv.get('pdf_path')
+                if not filename or not os.path.exists(filename):
+                    filename = f"invoice_{inv['id']}.pdf"
+                    file_path = generate_pdf(inv, filename)
+                else:
+                    file_path = filename
+                    
+                if file_path:
+                    success, msg = print_pdf_silently(file_path)
+                    if not success:
+                        print(f"Printing Error: {msg}")
+            except Exception as e: 
+                print(f"Error: {e}")
+        threading.Thread(target=task, daemon=True).start()
+
+    def open_pdf_in_background(inv):
+        # BACKGROUND TASK - NO BLOCKING DIALOG
+        show_msg(f"Background: Opening PDF for Invoice #{inv['id']}...", "blue")
+        def task():
+            try:
+                filename = f"invoice_{inv['id']}.pdf"
+                file_path = generate_pdf(inv, filename)
+                
+                # --- FIX: Check if file_path is valid before opening ---
+                if file_path and os.path.exists(file_path):
+                    if IS_WINDOWS_DESKTOP:
+                        webbrowser.open('file:///' + os.path.abspath(file_path))
+                    else:
+                        page.launch_url(f"file://{os.path.abspath(file_path)}")
+                else:
+                    print("Error: PDF Generation failed or returned None")
+                    # Optionally show a message on main thread if needed, but this is background
+                    
+            except Exception as e:
+                print(f"PDF Error: {e}")
+        threading.Thread(target=task, daemon=True).start()
 
     def reset_paths_to_real():
         global DATA_DIR, INVENTORY_FILE, INVOICES_JSON, CUSTOMERS_FILE, RECYCLE_BIN_FILE, RETURNS_FILE, CONFIG_FILE, config
@@ -628,7 +670,6 @@ def main(page: ft.Page):
         page.controls.clear()
         page.navigation_bar = None 
         page.overlay.clear()
-        page.overlay.append(loading_dlg)
         page.overlay.append(global_msg_dlg)
         
         user_input.value = ""
@@ -894,51 +935,6 @@ def main(page: ft.Page):
         eye_icon_btn.on_click = toggle_rev
         if state["rev_hidden"]: eye_icon_btn.icon = ft.Icons.VISIBILITY_OFF
 
-        def print_invoice_directly(inv):
-            loading_dlg.open = True
-            page.update()
-            def task():
-                try:
-                    filename = inv.get('pdf_path')
-                    if not filename or not os.path.exists(filename):
-                        filename = f"invoice_{inv['id']}.pdf"
-                        file_path = generate_pdf(inv, filename)
-                    else:
-                        file_path = filename
-                        
-                    success, msg = print_pdf_silently(file_path)
-                    if success:
-                        show_msg(f"Sent Invoice #{inv['id']} to Printer", "blue")
-                    else:
-                        show_msg(f"Printing: {msg}", "orange")
-                except Exception as e: 
-                    print(f"Error: {e}")
-                    show_msg(f"System Error: {e}", "red")
-                finally:
-                    loading_dlg.open = False
-                    page.update()
-            threading.Thread(target=task, daemon=True).start()
-
-        def open_pdf_in_background(inv):
-            loading_dlg.open = True
-            page.update()
-            def task():
-                try:
-                    filename = f"invoice_{inv['id']}.pdf"
-                    file_path = generate_pdf(inv, filename)
-                    
-                    if IS_WINDOWS_DESKTOP:
-                        webbrowser.open('file:///' + os.path.abspath(file_path))
-                    else:
-                        page.launch_url(f"file://{os.path.abspath(file_path)}")
-                except Exception as e:
-                    print(f"PDF Error: {e}")
-                    show_msg(f"Could not open PDF: {e}", "red")
-                finally:
-                    loading_dlg.open = False
-                    page.update()
-            threading.Thread(target=task, daemon=True).start()
-
         def change_page(delta):
             state["current_page"] += delta
             refresh_table_data()
@@ -1007,15 +1003,17 @@ def main(page: ft.Page):
                 text_color = "red" if inv.get('total', 0) < 0 else "black"
                 is_return_inv = inv.get('total', 0) < 0
                 
+                # --- UPDATE: Bolded ID, Customer Name, and Total ---
                 row_content_inner = ft.Row([
-                        ft.Text(inv.get('id', ''), width=60, color=text_color, size=TEXT_SIZE),
-                        ft.Container(ft.Text(inv.get('customer', '')[:30], color=text_color, size=TEXT_SIZE), width=150),
+                        ft.Text(inv.get('id', ''), width=60, color=text_color, size=TEXT_SIZE, weight="bold"),
+                        ft.Container(ft.Text(inv.get('customer', '')[:30], color=text_color, size=TEXT_SIZE, weight="bold"), width=150),
                         ft.Text(date_str, width=100, color=text_color, size=TEXT_SIZE),
                         ft.Text(time_str, width=90, color=text_color, size=TEXT_SIZE),
-                        ft.Text(f"{inv.get('total', 0):.2f}", width=100, color=text_color, weight="bold" if is_return_inv else "normal", size=TEXT_SIZE),
+                        ft.Text(f"{inv.get('total', 0):.2f}", width=100, color=text_color, weight="bold", size=TEXT_SIZE),
                         
                         ft.Row([
                             ft.IconButton(ft.Icons.INFO_OUTLINE, icon_color="green", on_click=lambda e, i=inv: show_invoice_history_details(i), tooltip="View Details", icon_size=ICON_SIZE), 
+                            # USES GLOBAL BACKGROUND FUNCTIONS
                             ft.IconButton(ft.Icons.PICTURE_AS_PDF, icon_color="blue", on_click=lambda e, i=inv: open_pdf_in_background(i), tooltip="Open PDF", icon_size=ICON_SIZE),
                             ft.IconButton(ft.Icons.PRINT, icon_color="blue", on_click=lambda e, i=inv: print_invoice_directly(i), tooltip="Direct Print", icon_size=ICON_SIZE)
                         ], width=140, alignment=ft.MainAxisAlignment.CENTER, spacing=0),
@@ -1219,7 +1217,8 @@ def main(page: ft.Page):
                     if inv_obj:
                         link_text = str(inv_id)
                         if inv_obj.get('total', 0) < 0: link_text += " (RET)"
-                        inv_display = ft.TextButton(content=ft.Text(link_text), on_click=lambda e, i=inv_obj: webbrowser.open('file:///' + os.path.abspath(generate_pdf(i, f"invoice_{i.get('id')}.pdf"))))
+                        # CHANGED: NOW USES GLOBAL BACKGROUND FUNCTION
+                        inv_display = ft.TextButton(content=ft.Text(link_text), on_click=lambda e, i=inv_obj: open_pdf_in_background(i))
                     else:
                         inv_display = ft.Text(str(inv_id))
                 else:
@@ -1286,12 +1285,13 @@ def main(page: ft.Page):
             
             rows = []
             for c in display_customers:
+                # --- UPDATE: Bolded ID, Name, Balance, Address ---
                 row_content_inner = ft.Row([
-                        ft.Text(str(c.get('id', '')), width=45, size=TEXT_SIZE), 
-                        ft.Container(ft.Text(c['name'], size=TEXT_SIZE), width=130), 
-                        ft.Text(c.get('phone', ''), width=100, size=TEXT_SIZE), 
-                        ft.Container(ft.Text(c.get('address', ''), size=TEXT_SIZE), width=110), 
-                        ft.Text(f"{c.get('balance', 0):.2f}", width=80, color="red" if c.get('balance', 0) > 0 else "black", size=TEXT_SIZE),
+                        ft.Text(str(c.get('id', '')), width=45, size=TEXT_SIZE, weight="bold"), 
+                        ft.Container(ft.Text(c['name'], size=TEXT_SIZE, weight="bold"), width=130), 
+                        ft.Text(c.get('phone', ''), width=100, size=TEXT_SIZE, weight="bold"), 
+                        ft.Container(ft.Text(c.get('address', ''), size=TEXT_SIZE, weight="bold"), width=110), 
+                        ft.Text(f"{c.get('balance', 0):.2f}", width=80, color="red" if c.get('balance', 0) > 0 else "black", size=TEXT_SIZE, weight="bold"),
                         ft.Row([
                             ft.IconButton(ft.Icons.INFO, icon_color="green", tooltip="Payment History & Entry", on_click=lambda e, curr=c: show_customer_payment_info(curr), icon_size=ICON_SIZE),
                             ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=c: show_customer_dialog(curr), icon_size=ICON_SIZE), 
@@ -1436,11 +1436,12 @@ def main(page: ft.Page):
                 cat_display = item.get('category')
                 if not cat_display: cat_display = "NULL" 
                 
+                # --- UPDATE: Bolded Product Name ---
                 row_content_inner = ft.Row([
-                        ft.Text(str(item.get('id', '')), width=60, size=TEXT_SIZE), 
-                        ft.Container(ft.Text(item['name'], size=TEXT_SIZE), width=180),
-                        ft.Text(f"{item['price']:.0f}", width=70, size=TEXT_SIZE), 
-                        ft.Text(str(item.get('qty', 0)), width=50, color="red" if item.get('qty', 0) < 5 else "black", size=TEXT_SIZE), 
+                        ft.Text(str(item.get('id', '')), width=60, size=TEXT_SIZE, weight="bold"), 
+                        ft.Container(ft.Text(item['name'], size=TEXT_SIZE, weight="bold"), width=180),
+                        ft.Text(f"{item['price']:.0f}", width=70, size=TEXT_SIZE, weight="bold"), 
+                        ft.Text(str(item.get('qty', 0)), width=50, color="red" if item.get('qty', 0) < 5 else "black", size=TEXT_SIZE, weight="bold"), 
                         ft.Row([
                             ft.IconButton(ft.Icons.EDIT, icon_color="blue", on_click=lambda e, curr=item: show_product_dialog(curr), icon_size=ICON_SIZE), 
                             ft.IconButton(ft.Icons.DELETE, icon_color="red", on_click=lambda e, i=item: confirm_and_delete(i, inventory, INVENTORY_FILE, 2, "Product"), icon_size=ICON_SIZE)
@@ -1646,7 +1647,7 @@ def main(page: ft.Page):
             for idx, i in enumerate(state["billing_items"]):
                 line_total = i['qty'] * i['price']
                 rows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(i['name'])), 
+                    ft.DataCell(ft.Text(i['name'], weight="bold")), 
                     ft.DataCell(ft.Text(f"{i['price']:.0f}")),
                     ft.DataCell(ft.Text(str(i['qty']))),
                     ft.DataCell(ft.Text(f"{line_total:.0f}")),
@@ -1686,9 +1687,10 @@ def main(page: ft.Page):
 
             for idx, i in enumerate(state["billing_items"]):
                 line_total = i['qty'] * i['price']
+                # --- UPDATE: Bolded Item Name in Billing list ---
                 item_row = ft.Container(
                     content=ft.Row([
-                        ft.Text(i['name'], expand=True, size=13),
+                        ft.Text(i['name'], expand=True, size=13, weight="bold"), 
                         ft.Text(str(i['qty']), width=50, text_align="center", size=13),
                         ft.Text(f"{line_total:.0f}", width=70, text_align="right", size=13),
                         ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="red", icon_size=20, on_click=lambda e, idx=idx: delete_billing_item(idx), width=40)
@@ -1801,9 +1803,12 @@ def main(page: ft.Page):
             )
 
             def finalize_and_print(e):
-                loading_dlg.open = True
+                # Close the input dialog IMMEDIATELY
+                preview_dlg.open = False
+                # Show non-blocking notification
+                show_msg("Finalizing Invoice... Please wait.", "green")
                 page.update()
-
+                
                 def task():
                     try:
                         try:
@@ -1883,11 +1888,12 @@ def main(page: ft.Page):
                         state["billing_customer"] = None
                         state["billing_product"] = None
                         
+                        # Go to dashboard to show new ID
                         render_tab(0)
-                        show_msg("Invoice Saved Successfully! Opening PDF...", "green")
 
                         try:
-                            if saved_pdf_path:
+                            # --- FIX: Check if saved_pdf_path is valid ---
+                            if saved_pdf_path and os.path.exists(saved_pdf_path):
                                 webbrowser.open(f'file:///{os.path.abspath(saved_pdf_path)}')
                         except Exception as e:
                             print(f"Error opening PDF: {e}")
@@ -1897,8 +1903,6 @@ def main(page: ft.Page):
                         show_msg(f"Error finalizing: {ex}", "red")
                     
                     finally:
-                        loading_dlg.open = False
-                        preview_dlg.open = False
                         page.update()
 
                 threading.Thread(target=task, daemon=True).start()
@@ -2321,7 +2325,7 @@ def main(page: ft.Page):
                 state["is_logged_in"] = True
 
                 page.overlay.clear()
-                page.overlay.append(loading_dlg)
+                # page.overlay.append(loading_dlg) # REMOVED BLOCKING LOADER
                 page.overlay.append(global_msg_dlg)
                 
                 configure_layout()
