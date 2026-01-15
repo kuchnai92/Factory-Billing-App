@@ -69,7 +69,7 @@ try:
 except ImportError:
     HAS_RESHAPER = False
 
-# --- SMART DATA DIRECTORY SETUP (FIXED FOR EXE) ---
+# --- SMART DATA DIRECTORY SETUP ---
 if getattr(sys, 'frozen', False):
     BASE_INTERNAL_DIR = sys._MEIPASS 
     BASE_EXTERNAL_DIR = os.path.dirname(sys.executable)
@@ -84,11 +84,25 @@ ASSETS_DIR = os.path.join(BASE_INTERNAL_DIR, "assets")
 if IS_WINDOWS_DESKTOP:
     REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 else:
+    # --- MOBILE STORAGE LOGIC ---
+    # Try to use the public storage so user can see the folder
     try:
+        # Attempt to use /storage/emulated/0/AminSons_Data (Standard Android Root)
+        public_path = "/storage/emulated/0/AminSons_Data"
+        if not os.path.exists(public_path):
+            os.makedirs(public_path)
+        REAL_DATA_DIR = public_path
+    except PermissionError:
+        # Fallback to App Internal Storage if permission denied
+        try:
+            user_home = os.path.expanduser("~")
+            REAL_DATA_DIR = os.path.join(user_home, "AminSons_Data")
+        except:
+            REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
+    except Exception:
+         # Generic Fallback
         user_home = os.path.expanduser("~")
         REAL_DATA_DIR = os.path.join(user_home, "AminSons_Data")
-    except:
-        REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 
 if not os.path.exists(REAL_DATA_DIR):
     try: os.makedirs(REAL_DATA_DIR)
@@ -172,7 +186,7 @@ def backup_data(username):
     except Exception as e:
         pass 
 
-# --- DATA MANAGEMENT (OFFLINE FIRST) ---
+# --- DATA MANAGEMENT (MANUAL SYNC ONLY) ---
 
 def get_table_name_from_file(filepath):
     base = os.path.basename(filepath)
@@ -189,20 +203,6 @@ def load_data(file, default):
                 data = json.load(f)
             except: 
                 pass 
-    
-    if HAS_SUPABASE and supabase and "config.json" not in file:
-        table_name = get_table_name_from_file(file)
-        if table_name:
-            try:
-                response = supabase.table(table_name).select("*").execute()
-                if response.data:
-                    data = response.data
-                    try:
-                        with open(file, "w") as f:
-                            json.dump(data, f, indent=4)
-                    except: pass
-            except Exception as e:
-                pass
     return data
 
 def save_data(file, data):
@@ -211,16 +211,6 @@ def save_data(file, data):
             json.dump(data, f, indent=4)
     except Exception as e:
         print(f"Save Local Error: {e}")
-
-    if HAS_SUPABASE and supabase and "config.json" not in file:
-        table_name = get_table_name_from_file(file)
-        def push_to_db(t_name, payload):
-            try:
-                supabase.table(t_name).upsert(payload).execute()
-            except Exception as e:
-                pass 
-        if table_name:
-            threading.Thread(target=push_to_db, args=(table_name, data), daemon=True).start()
 
 # Load Config
 config = load_data(CONFIG_FILE, {
@@ -285,11 +275,10 @@ def generate_pdf(invoice, filename):
             except Exception as e:
                 print(f"Font loading error: {e}")
 
-        # --- HELPER: FORCE BOLD FOR URDU ---
         def set_font_smart(text, style='', size=10):
             if is_urdu(text) and has_custom_font:
-                # FORCE BOLD ('B') for Urdu to ensure visibility
-                pdf.set_font("UrduFont", 'B', size)
+                style_code = 'B' if 'B' in style else ''
+                pdf.set_font("UrduFont", style_code, size)
                 return process_text(text)
             else:
                 pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
@@ -297,13 +286,12 @@ def generate_pdf(invoice, filename):
 
         def set_font_family(style='', size=10, use_urdu=False):
             if use_urdu and has_custom_font:
-                pdf.set_font("UrduFont", 'B', size) # Force Bold
+                pdf.set_font("UrduFont", 'B', size)
             else:
                 pdf.set_font("Helvetica", 'B' if 'B' in style else '', size)
 
         c_info = config.get("company_info", {})
         
-        # --- HEADER ---
         c_name_raw = c_info.get("name", "Amin & Sons")
         final_c_name = set_font_smart(c_name_raw, 'B', 20)
         
@@ -324,7 +312,6 @@ def generate_pdf(invoice, filename):
         pdf.cell(0, 5, c_phone, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(4)
         
-        # Inv No
         set_font_family('B', 11, False) 
         doc_label = "Ret #" if is_return else "Inv #"
         pdf.cell(0, 6, f"{doc_label}: {invoice.get('id', '01')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
@@ -349,14 +336,13 @@ def generate_pdf(invoice, filename):
         pdf.write(6, f"Time: {invoice_time}")
         pdf.ln(7)
 
-        # Customer
         pdf.set_x(2)
         set_font_family('B', 10, False)
         pdf.write(6, "Customer: ")
         indent_x = pdf.get_x()
         
         cust_raw = invoice.get('customer', 'Unknown')
-        final_cust = set_font_smart(cust_raw, 'B', 11) # BOLD
+        final_cust = set_font_smart(cust_raw, '', 11) 
         
         pdf.set_left_margin(indent_x)
         pdf.write(6, final_cust)
@@ -374,31 +360,43 @@ def generate_pdf(invoice, filename):
         pdf.line(2, y_pos, 78, y_pos) 
         pdf.set_dash_pattern() 
         
-        # Table Headers
         set_font_family('B', 9, False)
         pdf.set_x(2)
-        pdf.cell(36, 8, "Item", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
-        pdf.cell(10, 8, "Qty", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-        pdf.cell(14, 8, "Rate", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+        pdf.cell(32, 8, "Item", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L')
+        pdf.cell(8, 8, "Qty", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+        pdf.cell(20, 8, "Rate", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
         pdf.cell(16, 8, "Total", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
         
-        # Items
         total_qty = 0
         for item in invoice.get('items', []):
             name_raw = item.get('name', 'N/A')
             price = item.get('price', 0)
             qty = item.get('qty', 0)
+            item_disc_val = item.get('item_discount', 0)
             total_qty += qty
             
+            unit_disc = item_disc_val / qty if qty > 0 else 0
+            rate_text = f"{price:.0f}"
+            if unit_disc > 0:
+                rate_text = f"{price:.0f}-{unit_disc:.0f}" 
+            
             pdf.set_x(2)
-            final_item_name = set_font_smart(name_raw, 'B', 10) # BOLD
+            final_item_name = set_font_smart(name_raw, 'B', 10) 
             if len(final_item_name) > 20: final_item_name = final_item_name[:20]
 
-            pdf.cell(36, 8, final_item_name, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
+            pdf.cell(32, 8, final_item_name, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='L') 
             set_font_family('B', 10, False)
-            pdf.cell(10, 8, str(qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-            pdf.cell(14, 8, f"{price:.0f}", border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-            line_total = qty * price
+            pdf.cell(8, 8, str(qty), border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+            
+            if len(rate_text) > 5:
+                set_font_family('B', 8, False)
+            else:
+                set_font_family('B', 10, False)
+                
+            pdf.cell(20, 8, rate_text, border=0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+            
+            set_font_family('B', 10, False) 
+            line_total = (qty * price) - item_disc_val
             pdf.cell(16, 8, f"{line_total:.0f}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
         
         pdf.ln(2)
@@ -407,7 +405,6 @@ def generate_pdf(invoice, filename):
         pdf.line(2, y_pos, 78, y_pos)
         pdf.set_dash_pattern() 
         
-        # --- TOTALS SECTION ---
         pdf.set_x(2)
         set_font_family('B', 12, False) 
         total_label = "REFUND TOTAL:" if is_return else "TOTAL:"
@@ -538,8 +535,8 @@ def main(page: ft.Page):
     page.window.width = 1200
     page.window.height = 800
     
-    mode_title = "Desktop Mode" if IS_WINDOWS_DESKTOP else "Mobile Mode (Offline Enabled)"
-    page.title = f"Amin & Sons - Enterprise Billing ({mode_title})"
+    mode_title = "Desktop Mode" if IS_WINDOWS_DESKTOP else "Mobile Mode (Storage: AminSons_Data)"
+    page.title = f"Amin & Sons - {mode_title}"
     
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
@@ -581,7 +578,6 @@ def main(page: ft.Page):
     )
     page.overlay.append(global_msg_dlg)
     
-    # Use this for non-blocking notifications
     def show_msg(text, color="red"):
         title_text = "Information" if color in ["green", "blue"] else "Warning/Error"
         global_msg_dlg.title = ft.Text(title_text)
@@ -602,9 +598,8 @@ def main(page: ft.Page):
     page.window_prevent_close = True
     page.on_window_event = handle_window_event
 
-    # --- SHARED BACKGROUND TASKS (AVAILABLE TO ALL TABS) ---
+    # --- SHARED BACKGROUND TASKS ---
     def print_invoice_directly(inv):
-        # BACKGROUND TASK - NO BLOCKING DIALOG
         show_msg(f"Background: Sending Invoice #{inv['id']} to Printer...", "blue")
         def task():
             try:
@@ -624,23 +619,27 @@ def main(page: ft.Page):
         threading.Thread(target=task, daemon=True).start()
 
     def open_pdf_in_background(inv):
-        # BACKGROUND TASK - NO BLOCKING DIALOG
-        show_msg(f"Background: Opening PDF for Invoice #{inv['id']}...", "blue")
+        show_msg(f"Opening PDF for Invoice #{inv['id']}...", "blue")
         def task():
             try:
                 filename = f"invoice_{inv['id']}.pdf"
                 file_path = generate_pdf(inv, filename)
                 
-                # --- FIX: Check if file_path is valid before opening ---
                 if file_path and os.path.exists(file_path):
                     if IS_WINDOWS_DESKTOP:
                         webbrowser.open('file:///' + os.path.abspath(file_path))
                     else:
-                        page.launch_url(f"file://{os.path.abspath(file_path)}")
+                        # --- MOBILE OPEN PDF LOGIC ---
+                        # We use launch_url. On Android this hands over to the OS.
+                        # The OS will pop up "Open With" if no default is set.
+                        try:
+                            page.launch_url(f"file://{os.path.abspath(file_path)}")
+                        except Exception as mobile_ex:
+                            print(f"Mobile launch failed: {mobile_ex}")
+                            # Fallback if standard launch fails
+                            page.launch_url(os.path.abspath(file_path))
                 else:
-                    print("Error: PDF Generation failed or returned None")
-                    # Optionally show a message on main thread if needed, but this is background
-                    
+                    print("Error: PDF Generation failed")
             except Exception as e:
                 print(f"PDF Error: {e}")
         threading.Thread(target=task, daemon=True).start()
@@ -707,14 +706,6 @@ def main(page: ft.Page):
                     if os.path.exists(std_path):
                         try: os.remove(std_path)
                         except: pass
-                    
-                    try:
-                        target_prefix = f"invoice_{item_data.get('id')}_"
-                        for f in os.listdir(DATA_DIR):
-                            if f.startswith(target_prefix) and f.endswith(".pdf"):
-                                try: os.remove(os.path.join(DATA_DIR, f))
-                                except: pass
-                    except: pass
                 
                 if is_return_inv:
                     for r_item in item_data.get('items', []):
@@ -732,16 +723,6 @@ def main(page: ft.Page):
                         if inv_paid == 0:
                             refund_amt = abs(inv_total)
                             cust['balance'] += refund_amt
-                    
-                    if "-RET" in str(item_data['id']):
-                        orig_id = str(item_data['id']).split("-RET")[0]
-                        orig_inv = next((i for i in invoices if str(i['id']) == str(orig_id)), None)
-                        if orig_inv:
-                            for r_item in item_data.get('items', []):
-                                for orig_item in orig_inv.get('items', []):
-                                    if str(orig_item['id']) == str(r_item['id']):
-                                        current_ret = orig_item.get('returned_qty', 0)
-                                        orig_item['returned_qty'] = max(0, current_ret - r_item['qty'])
                     
                     save_data(INVENTORY_FILE, inventory)
                     save_data(CUSTOMERS_FILE, customers)
@@ -765,16 +746,6 @@ def main(page: ft.Page):
                         reindex_collection(list_source, "P-")
                     
                     save_data(file_path, list_source)
-
-                    if HAS_SUPABASE and supabase:
-                        t_name = get_table_name_from_file(file_path)
-                        if t_name in ["inventory", "customers", "invoices"]:
-                            def run_db_delete():
-                                try:
-                                    supabase.table(t_name).delete().eq("id", item_data['id']).execute()
-                                except Exception as dbe:
-                                    print(f"Supabase Delete Error: {dbe}")
-                            threading.Thread(target=run_db_delete, daemon=True).start()
 
                 dlg.open = False
                 page.update()
@@ -921,7 +892,6 @@ def main(page: ft.Page):
 
         my_list_view = ft.Column(spacing=5)
         
-        # --- CHANGED: Small text size for PKR/Numbers ---
         rev_text = ft.Text(value="**** PKR", color="white", size=18, weight="bold")
         profit_text = ft.Text(value="**** PKR", color="white", size=18, weight="bold")
         eye_icon_btn = ft.IconButton(icon=ft.Icons.VISIBILITY, icon_color="white")
@@ -1001,9 +971,7 @@ def main(page: ft.Page):
                 time_str = " ".join(date_parts[1:]) if len(date_parts) > 1 else ""
                 
                 text_color = "red" if inv.get('total', 0) < 0 else "black"
-                is_return_inv = inv.get('total', 0) < 0
                 
-                # --- UPDATE: Bolded ID, Customer Name, and Total ---
                 row_content_inner = ft.Row([
                         ft.Text(inv.get('id', ''), width=60, color=text_color, size=TEXT_SIZE, weight="bold"),
                         ft.Container(ft.Text(inv.get('customer', '')[:30], color=text_color, size=TEXT_SIZE, weight="bold"), width=150),
@@ -1013,7 +981,6 @@ def main(page: ft.Page):
                         
                         ft.Row([
                             ft.IconButton(ft.Icons.INFO_OUTLINE, icon_color="green", on_click=lambda e, i=inv: show_invoice_history_details(i), tooltip="View Details", icon_size=ICON_SIZE), 
-                            # USES GLOBAL BACKGROUND FUNCTIONS
                             ft.IconButton(ft.Icons.PICTURE_AS_PDF, icon_color="blue", on_click=lambda e, i=inv: open_pdf_in_background(i), tooltip="Open PDF", icon_size=ICON_SIZE),
                             ft.IconButton(ft.Icons.PRINT, icon_color="blue", on_click=lambda e, i=inv: print_invoice_directly(i), tooltip="Direct Print", icon_size=ICON_SIZE)
                         ], width=140, alignment=ft.MainAxisAlignment.CENTER, spacing=0),
@@ -1118,7 +1085,6 @@ def main(page: ft.Page):
         
         scroll_container = ft.Row([dashboard_content], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
 
-        # --- CHANGED: Layout for Revenue/Profit to prevent eye button disappearing ---
         content_area.controls.append(ft.Row([
             ft.Container(
                 content=ft.Row([
@@ -1217,7 +1183,6 @@ def main(page: ft.Page):
                     if inv_obj:
                         link_text = str(inv_id)
                         if inv_obj.get('total', 0) < 0: link_text += " (RET)"
-                        # CHANGED: NOW USES GLOBAL BACKGROUND FUNCTION
                         inv_display = ft.TextButton(content=ft.Text(link_text), on_click=lambda e, i=inv_obj: open_pdf_in_background(i))
                     else:
                         inv_display = ft.Text(str(inv_id))
@@ -1285,7 +1250,6 @@ def main(page: ft.Page):
             
             rows = []
             for c in display_customers:
-                # --- UPDATE: Bolded ID, Name, Balance, Address ---
                 row_content_inner = ft.Row([
                         ft.Text(str(c.get('id', '')), width=45, size=TEXT_SIZE, weight="bold"), 
                         ft.Container(ft.Text(c['name'], size=TEXT_SIZE, weight="bold"), width=130), 
@@ -1361,7 +1325,6 @@ def main(page: ft.Page):
         
         scroll_container = ft.Row([full_table_container], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
 
-        # --- CHANGED: Bold button text ---
         add_cust_btn = ft.ElevatedButton(content=ft.Text("Add Customer", weight="bold"), icon=ft.Icons.ADD, on_click=lambda _: show_customer_dialog())
 
         content_area.controls.append(ft.Row([ft.Text("Customers", size=30, weight="bold"), add_cust_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
@@ -1391,7 +1354,6 @@ def main(page: ft.Page):
                 state["search_query"] = ""; render_tab(1)
             else: show_msg("Name required")
         
-        # --- CHANGED: Added width restriction to container to fit mobile screen ---
         content_container = ft.Container(
             content=ft.Column([id_f, name_f, phone_f, addr_f, balance_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
             width=300
@@ -1436,7 +1398,6 @@ def main(page: ft.Page):
                 cat_display = item.get('category')
                 if not cat_display: cat_display = "NULL" 
                 
-                # --- UPDATE: Bolded Product Name ---
                 row_content_inner = ft.Row([
                         ft.Text(str(item.get('id', '')), width=60, size=TEXT_SIZE, weight="bold"), 
                         ft.Container(ft.Text(item['name'], size=TEXT_SIZE, weight="bold"), width=180),
@@ -1509,7 +1470,6 @@ def main(page: ft.Page):
         
         scroll_container = ft.Row([full_table_container], scroll=ft.ScrollMode.ADAPTIVE, expand=False)
         
-        # --- CHANGED: Bold button ---
         add_prod_btn = ft.ElevatedButton(content=ft.Text("Add Product", weight="bold"), icon=ft.Icons.ADD, on_click=lambda _: show_product_dialog())
 
         content_area.controls.append(ft.Row([ft.Text("Inventory", size=30, weight="bold"), add_prod_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
@@ -1547,7 +1507,6 @@ def main(page: ft.Page):
                 state["search_query"] = ""; render_tab(2)
             except ValueError: show_msg("Invalid numeric values", "red")
         
-        # --- CHANGED: Added width restriction ---
         content_container = ft.Container(
             content=ft.Column([id_f, name_f, cost_f, price_f, qty_f], tight=True, scroll=ft.ScrollMode.ADAPTIVE),
             width=300
@@ -1592,7 +1551,6 @@ def main(page: ft.Page):
             action_row = ft.Row([add_btn, clear_btn], alignment=ft.MainAxisAlignment.START, spacing=10)
 
         else:
-            # Mobile
             customer_dd = ft.Dropdown(
                 label="Customer", 
                 options=customer_options, 
@@ -1612,13 +1570,11 @@ def main(page: ft.Page):
             
             qty_f = ft.TextField(label="Qty", value="1", width=70, text_size=12, content_padding=10)
             
-            # --- CHANGED: Add and Clear buttons same size (expand=True) ---
             add_btn = ft.ElevatedButton(content=ft.Text("Add", size=12, weight="bold"), on_click=lambda e: add_i(e), expand=True, bgcolor="blue", color="white", style=ft.ButtonStyle(padding=5))
             clear_btn = ft.ElevatedButton(content=ft.Text("Clear", size=12, weight="bold"), on_click=lambda e: clear_all_billing(e), expand=True, bgcolor="red", color="white", style=ft.ButtonStyle(padding=5))
             
             input_row = ft.Container() 
             
-            # Action row now splits space evenly between Add/Clear after the Qty
             action_row = ft.Row([qty_f, add_btn, clear_btn], spacing=5)
 
         def on_cust_change(e):
@@ -1687,7 +1643,6 @@ def main(page: ft.Page):
 
             for idx, i in enumerate(state["billing_items"]):
                 line_total = i['qty'] * i['price']
-                # --- UPDATE: Bolded Item Name in Billing list ---
                 item_row = ft.Container(
                     content=ft.Row([
                         ft.Text(i['name'], expand=True, size=13, weight="bold"), 
@@ -1767,21 +1722,46 @@ def main(page: ft.Page):
             prev_balance = cust.get('balance', 0)
             
             paid_input = ft.TextField(label="Paid Amount", value="0", width=150)
-            disc_input = ft.TextField(label="Discount", value="0", width=150)
+            disc_input = ft.TextField(label="Global Discount", value="0", width=150)
             del_input = ft.TextField(label="Delivery Charges", value="0", width=150)
             
             new_bal_text = ft.Text(value=str(prev_balance + total_bill), size=16, weight="bold")
             total_due_text = ft.Text(value=str(prev_balance + total_bill), size=16, weight="bold", color="blue")
+            
+            item_disc_inputs = []
+
+            for i in state["billing_items"]:
+                i['item_discount'] = 0.0
 
             def calculate_updates(e):
+                sum_item_discounts = 0.0
+                
+                for d_field in item_disc_inputs:
+                    try:
+                        val = float(d_field.value) if d_field.value else 0.0
+                        
+                        line_qty = d_field.data['item']['qty']
+                        line_price = d_field.data['item']['price']
+                        line_net = (line_qty * line_price) - val
+                        
+                        d_field.data['total_text_ref'].value = f"{line_net:.0f}"
+                        d_field.data['item']['item_discount'] = val
+                        
+                        sum_item_discounts += val
+                            
+                    except ValueError:
+                        pass
+                
                 try:
                     p = float(paid_input.value) if paid_input.value else 0.0
-                    d = float(disc_input.value) if disc_input.value else 0.0
+                    d_global = float(disc_input.value) if disc_input.value else 0.0
                     dc = float(del_input.value) if del_input.value else 0.0
                 except ValueError:
-                    p, d, dc = 0.0, 0.0, 0.0
+                    p, d_global, dc = 0.0, 0.0, 0.0
                 
-                net_bill = total_bill - d + dc
+                total_deductions = d_global + sum_item_discounts
+                
+                net_bill = total_bill - total_deductions + dc
                 total_due = net_bill + prev_balance
                 new_balance = total_due - p
                 
@@ -1792,20 +1772,50 @@ def main(page: ft.Page):
             paid_input.on_change = calculate_updates
             disc_input.on_change = calculate_updates
             del_input.on_change = calculate_updates
+
+            rows = []
+            for i in state["billing_items"]:
+                initial_line_total = (i['qty'] * i['price']) - i.get('item_discount', 0)
+                txt_line_total = ft.Text(f"{initial_line_total:.0f}")
+                
+                txt_disc_input = ft.TextField(
+                    value="0", 
+                    width=80, 
+                    height=35, 
+                    content_padding=5, 
+                    text_size=12,
+                    data={
+                        'item': i, 
+                        'total_text_ref': txt_line_total
+                    },
+                    on_change=calculate_updates
+                )
+                
+                item_disc_inputs.append(txt_disc_input)
+
+                rows.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(i['name'])), 
+                    ft.DataCell(ft.Text(str(i['qty']))), 
+                    ft.DataCell(txt_disc_input), 
+                    ft.DataCell(txt_line_total) 
+                ]))
+
+            preview_items = ft.DataTable(
+                columns=[
+                    ft.DataColumn(ft.Text("Item")), 
+                    ft.DataColumn(ft.Text("Qty")), 
+                    ft.DataColumn(ft.Text("Item Disc.")), 
+                    ft.DataColumn(ft.Text("Total (Net)"))
+                ],
+                rows=rows,
+                column_spacing=10,
+                heading_row_color=ft.Colors.GREY_100 
+            )
             
             calculate_updates(None)
 
-            preview_items = ft.DataTable(
-                columns=[ft.DataColumn(ft.Text("Item")), ft.DataColumn(ft.Text("Qty")), ft.DataColumn(ft.Text("Total"))],
-                rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(i['name'])), ft.DataCell(ft.Text(str(i['qty']))), ft.DataCell(ft.Text(f"{i['qty']*i['price']:.0f}"))]) for i in state["billing_items"]],
-                column_spacing=20,
-                heading_row_color=ft.Colors.GREY_100 
-            )
-
             def finalize_and_print(e):
-                # Close the input dialog IMMEDIATELY
                 preview_dlg.open = False
-                # Show non-blocking notification
                 show_msg("Finalizing Invoice... Please wait.", "green")
                 page.update()
                 
@@ -1813,14 +1823,17 @@ def main(page: ft.Page):
                     try:
                         try:
                             final_paid = float(paid_input.value) if paid_input.value else 0.0
-                            final_disc = float(disc_input.value) if disc_input.value else 0.0
+                            global_disc = float(disc_input.value) if disc_input.value else 0.0
                             final_del = float(del_input.value) if del_input.value else 0.0
                         except: 
                             final_paid = 0.0
-                            final_disc = 0.0
+                            global_disc = 0.0
                             final_del = 0.0
                         
-                        final_total_due = (total_bill - final_disc + final_del) + prev_balance
+                        total_item_disc_val = sum(item.get('item_discount', 0) for item in state["billing_items"])
+                        final_combined_discount = global_disc + total_item_disc_val
+
+                        final_total_due = (total_bill - final_combined_discount + final_del) + prev_balance
                         final_new_balance = final_total_due - final_paid
 
                         backup_data(CURRENT_ADMIN)
@@ -1848,7 +1861,7 @@ def main(page: ft.Page):
                             'customer_address': cust.get('address', ''), 
                             'items': copy.deepcopy(state["billing_items"]), 
                             'total': total_bill, 
-                            'discount': final_disc,
+                            'discount': final_combined_discount, 
                             'delivery': final_del,
                             'total_cost': total_cost,
                             'paid': final_paid,
@@ -1888,13 +1901,18 @@ def main(page: ft.Page):
                         state["billing_customer"] = None
                         state["billing_product"] = None
                         
-                        # Go to dashboard to show new ID
                         render_tab(0)
 
                         try:
-                            # --- FIX: Check if saved_pdf_path is valid ---
                             if saved_pdf_path and os.path.exists(saved_pdf_path):
-                                webbrowser.open(f'file:///{os.path.abspath(saved_pdf_path)}')
+                                if IS_WINDOWS_DESKTOP:
+                                    webbrowser.open(f'file:///{os.path.abspath(saved_pdf_path)}')
+                                else:
+                                    # MOBILE AUTO-OPEN ATTEMPT
+                                    try:
+                                        page.launch_url(f"file://{os.path.abspath(saved_pdf_path)}")
+                                    except:
+                                        page.launch_url(os.path.abspath(saved_pdf_path))
                         except Exception as e:
                             print(f"Error opening PDF: {e}")
 
@@ -1921,7 +1939,7 @@ def main(page: ft.Page):
                     ft.Divider(),
                     
                     ft.Row([ft.Text("Subtotal:"), ft.Text(f"{total_bill:.2f} PKR")], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Row([ft.Text("Discount:"), disc_input], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([ft.Text("Global Discount:"), disc_input], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Row([ft.Text("Delivery:"), del_input], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     
                     ft.Divider(),
@@ -2149,8 +2167,8 @@ def main(page: ft.Page):
                     del config["admins"][admin_username]
                     save_data(CONFIG_FILE, config)
                 
-                target_data = os.path.join(APP_ROOT, f"data_{admin_username}")
-                target_backups = os.path.join(APP_ROOT, "backups", f"backups_{admin_username}")
+                target_data = os.path.join(REAL_DATA_DIR, f"data_{admin_username}")
+                target_backups = os.path.join(REAL_DATA_DIR, "backups", f"backups_{admin_username}")
                 forced_cleanup(target_data)
                 forced_cleanup(target_backups)
                 admin_dlg.open = False
@@ -2171,41 +2189,74 @@ def main(page: ft.Page):
             admin_dlg.open = True
             page.update()
 
-        def sync_local_to_cloud(e):
+        def manual_load_from_cloud(e):
             if not HAS_SUPABASE or not supabase:
-                show_msg("Supabase not connected! Check internet or pip install supabase.", "red")
+                show_msg("Supabase not connected! Check internet.", "red")
                 return
 
-            loading_dlg.open = True
-            page.update()
+            show_msg("Fetching data from cloud... Please wait.", "blue")
+            
+            def task():
+                try:
+                    # FETCH INVENTORY
+                    inv_resp = supabase.table("inventory").select("*").execute()
+                    if inv_resp.data:
+                        inventory.clear()
+                        inventory.extend(inv_resp.data)
+                        save_data(INVENTORY_FILE, inventory)
+                    
+                    # FETCH CUSTOMERS
+                    cust_resp = supabase.table("customers").select("*").execute()
+                    if cust_resp.data:
+                        customers.clear()
+                        customers.extend(cust_resp.data)
+                        save_data(CUSTOMERS_FILE, customers)
+                        
+                    # FETCH INVOICES
+                    sales_resp = supabase.table("invoices").select("*").execute()
+                    if sales_resp.data:
+                        invoices.clear()
+                        invoices.extend(sales_resp.data)
+                        save_data(INVOICES_JSON, invoices)
 
+                    show_msg("Data Loaded to Mobile Storage Successfully!", "green")
+                    
+                except Exception as ex:
+                    show_msg(f"Error loading from cloud: {ex}", "red")
+
+            threading.Thread(target=task, daemon=True).start()
+
+        def manual_save_to_cloud(e):
+            if not HAS_SUPABASE or not supabase:
+                show_msg("Supabase not connected! Check internet.", "red")
+                return
+
+            show_msg("Pushing local data to cloud... Please wait.", "blue")
+            
             def task():
                 errors = []
-                for inv in list(invoices): 
-                    try:
-                        res = supabase.table("invoices").select("id").eq("id", inv['id']).execute()
-                        if res.data: 
-                            supabase.table("invoices").upsert(inv).execute()
-                        else:
-                            supabase.table("invoices").insert(inv).execute()
-                    except Exception as ex:
-                        errors.append(f"Inv {inv.get('id')}: {ex}")
+                try:
+                    if inventory:
+                        supabase.table("inventory").upsert(inventory).execute()
+                except Exception as ex:
+                    errors.append(f"Inventory Error: {ex}")
 
                 try:
-                    for c in customers: supabase.table("customers").upsert(c).execute()
-                except Exception as e: errors.append(f"Customers: {e}")
-                    
-                try:
-                    for i in inventory: supabase.table("inventory").upsert(i).execute()
-                except Exception as e: errors.append(f"Inventory: {e}")
+                    if customers:
+                        supabase.table("customers").upsert(customers).execute()
+                except Exception as ex:
+                    errors.append(f"Customer Error: {ex}")
 
-                loading_dlg.open = False
-                page.update()
-                
+                try:
+                    if invoices:
+                        supabase.table("invoices").upsert(invoices).execute()
+                except Exception as ex:
+                    errors.append(f"Sales Error: {ex}")
+
                 if not errors:
-                    show_msg("Sync Complete!", "green")
+                    show_msg("Data Saved to Cloud Successfully!", "green")
                 else:
-                    show_msg(f"Sync Errors: {len(errors)} items failed.", "red")
+                    show_msg(f"Errors saving to cloud: {errors}", "red")
 
             threading.Thread(target=task, daemon=True).start()
 
@@ -2216,9 +2267,15 @@ def main(page: ft.Page):
                 ft.ElevatedButton(content=ft.Text("Customer Trash", weight="bold"), icon=ft.Icons.PERSON_REMOVE, on_click=lambda _: show_specific_trash("Customer")), 
                 ft.ElevatedButton(content=ft.Text("Sales Trash", weight="bold"), icon=ft.Icons.RECEIPT_LONG, on_click=lambda _: show_specific_trash("Invoice")), 
             ], wrap=True, run_spacing=10, spacing=10),
+            ft.Divider(),
+            ft.Text("Cloud Database Controls", size=20, weight="bold"),
+            ft.Row([
+                ft.ElevatedButton(content=ft.Text("Load Data from Cloud", weight="bold"), icon=ft.Icons.CLOUD_DOWNLOAD, on_click=manual_load_from_cloud, bgcolor="blue", color="white"),
+                ft.ElevatedButton(content=ft.Text("Save Data to Cloud", weight="bold"), icon=ft.Icons.CLOUD_UPLOAD, on_click=manual_save_to_cloud, bgcolor="green", color="white")
+            ], wrap=True, run_spacing=10, spacing=10),
+            ft.Divider(),
             ft.Row([
                 ft.ElevatedButton(content=ft.Text("Change Password", weight="bold"), icon=ft.Icons.LOCK_RESET, on_click=change_password_dialog),
-                ft.ElevatedButton(content=ft.Text("Sync Local Data to Database", weight="bold"), icon=ft.Icons.CLOUD_UPLOAD, on_click=sync_local_to_cloud, bgcolor="teal", color="white")
             ], wrap=True, run_spacing=10, spacing=10),
             ft.Divider(), 
             settings_dynamic_area,
@@ -2325,7 +2382,6 @@ def main(page: ft.Page):
                 state["is_logged_in"] = True
 
                 page.overlay.clear()
-                # page.overlay.append(loading_dlg) # REMOVED BLOCKING LOADER
                 page.overlay.append(global_msg_dlg)
                 
                 configure_layout()
