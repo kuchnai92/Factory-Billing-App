@@ -600,7 +600,8 @@ def main(page: ft.Page):
 
     # --- SHARED BACKGROUND TASKS ---
     def print_invoice_directly(inv):
-        show_msg(f"Background: Sending Invoice #{inv['id']} to Printer...", "blue")
+        if IS_WINDOWS_DESKTOP:
+            show_msg(f"Background: Sending Invoice #{inv['id']} to Printer...", "blue")
         def task():
             try:
                 filename = inv.get('pdf_path')
@@ -619,7 +620,11 @@ def main(page: ft.Page):
         threading.Thread(target=task, daemon=True).start()
 
     def open_pdf_in_background(inv):
-        show_msg(f"Opening PDF for Invoice #{inv['id']}...", "blue")
+        # Only show the "Opening" message if on Desktop. 
+        # On Mobile, we keep it silent to let the system "Open With" take over immediately.
+        if IS_WINDOWS_DESKTOP:
+            show_msg(f"Opening PDF for Invoice #{inv['id']}...", "blue")
+
         def task():
             try:
                 filename = f"invoice_{inv['id']}.pdf"
@@ -1133,13 +1138,14 @@ def main(page: ft.Page):
             label="Transaction Type",
             options=[ft.dropdown.Option("Receive Payment (IN)"), ft.dropdown.Option("Pay Back / Refund (OUT)")],
             value="Receive Payment (IN)",
-            width=250
+            width=None if not IS_WINDOWS_DESKTOP else 250,
+            expand=not IS_WINDOWS_DESKTOP
         )
 
-        amount_field = ft.TextField(label="Payment Amount", width=200)
-        inv_val_field = ft.TextField(label="Invoice # (Optional)", width=150)
-        method_dd = ft.Dropdown(label="Method", options=[ft.dropdown.Option("Cash/Hand-to-Hand"), ft.dropdown.Option("Online/Bank"), ft.dropdown.Option("Bank Check")], width=200, value="Cash/Hand-to-Hand")
-        details_field = ft.TextField(label="Payment Details (Bank Name, Trx ID, etc.)", multiline=True, width=410)
+        amount_field = ft.TextField(label="Payment Amount", width=None if not IS_WINDOWS_DESKTOP else 200, expand=not IS_WINDOWS_DESKTOP)
+        inv_val_field = ft.TextField(label="Invoice # (Optional)", width=None if not IS_WINDOWS_DESKTOP else 150, expand=not IS_WINDOWS_DESKTOP)
+        method_dd = ft.Dropdown(label="Method", options=[ft.dropdown.Option("Cash/Hand-to-Hand"), ft.dropdown.Option("Online/Bank"), ft.dropdown.Option("Bank Check")], width=None if not IS_WINDOWS_DESKTOP else 200, value="Cash/Hand-to-Hand", expand=not IS_WINDOWS_DESKTOP)
+        details_field = ft.TextField(label="Payment Details (Bank Name, Trx ID, etc.)", multiline=True, width=None if not IS_WINDOWS_DESKTOP else 410, expand=not IS_WINDOWS_DESKTOP)
 
         def delete_payment_entry(entry):
             def confirm_del(e):
@@ -1229,9 +1235,35 @@ def main(page: ft.Page):
             dlg.open = False
             page.update()
 
+        # Wrap table for horizontal scroll on mobile
+        table_scroll_container = ft.Row([history_table], scroll=ft.ScrollMode.ALWAYS, expand=True)
+
+        # Responsive Dialog Content
+        dlg_content = ft.Container(
+            content=ft.Column([
+                balance_label, 
+                ft.Divider(), 
+                ft.Text("Record New Transaction", weight="bold"), 
+                trx_type_dd, 
+                ft.Row([amount_field, inv_val_field], wrap=True), # Wrap inputs for mobile
+                method_dd, 
+                details_field, 
+                ft.Row([
+                    ft.ElevatedButton(content=ft.Text("Process Transaction"), on_click=add_payment, bgcolor="green", color="white", expand=not IS_WINDOWS_DESKTOP), 
+                    ft.ElevatedButton(content=ft.Text("Export (Excel)"), icon=ft.Icons.DOWNLOAD, on_click=export_history_excel, bgcolor="blue", color="white", expand=not IS_WINDOWS_DESKTOP)
+                ], spacing=10, wrap=True), # Wrap buttons
+                ft.Divider(), 
+                ft.Text("Past Payments", weight="bold"), 
+                # Vertical scroll for table section
+                ft.Column([table_scroll_container], scroll=ft.ScrollMode.AUTO, height=300) 
+            ], tight=True, scroll=ft.ScrollMode.AUTO),
+            width=750 if IS_WINDOWS_DESKTOP else page.width - 20, # Dynamic width
+            padding=10
+        )
+
         dlg = ft.AlertDialog(
             title=ft.Row([ft.Text(f"Payment History: {cust['name']}", size=20, weight="bold"), ft.IconButton(ft.Icons.CLOSE, on_click=close_dlg)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            content=ft.Container(content=ft.Column([balance_label, ft.Divider(), ft.Text("Record New Transaction", weight="bold"), trx_type_dd, ft.Row([amount_field, inv_val_field]), method_dd, details_field, ft.Row([ft.ElevatedButton(content=ft.Text("Process Transaction"), on_click=add_payment, bgcolor="green", color="white"), ft.ElevatedButton(content=ft.Text("Export History (Excel)"), icon=ft.Icons.DOWNLOAD, on_click=export_history_excel, bgcolor="blue", color="white")], spacing=10), ft.Divider(), ft.Text("Past Payments", weight="bold"), ft.Column([history_table], scroll=ft.ScrollMode.ADAPTIVE, height=200)], tight=True), width=750),
+            content=dlg_content,
             actions=[] 
         )
         page.overlay.append(dlg)
@@ -2236,25 +2268,31 @@ def main(page: ft.Page):
             def task():
                 errors = []
                 try:
+                    # 1. DELETE EXISTING INVENTORY & INSERT NEW
+                    supabase.table("inventory").delete().neq("id", "0").execute()
                     if inventory:
-                        supabase.table("inventory").upsert(inventory).execute()
+                        supabase.table("inventory").insert(inventory).execute()
                 except Exception as ex:
                     errors.append(f"Inventory Error: {ex}")
 
                 try:
+                    # 2. DELETE EXISTING CUSTOMERS & INSERT NEW
+                    supabase.table("customers").delete().neq("id", "0").execute()
                     if customers:
-                        supabase.table("customers").upsert(customers).execute()
+                        supabase.table("customers").insert(customers).execute()
                 except Exception as ex:
                     errors.append(f"Customer Error: {ex}")
 
                 try:
+                    # 3. DELETE EXISTING SALES & INSERT NEW
+                    supabase.table("invoices").delete().neq("id", "0").execute()
                     if invoices:
-                        supabase.table("invoices").upsert(invoices).execute()
+                        supabase.table("invoices").insert(invoices).execute()
                 except Exception as ex:
                     errors.append(f"Sales Error: {ex}")
 
                 if not errors:
-                    show_msg("Data Saved to Cloud Successfully!", "green")
+                    show_msg("Cloud Sync Complete: Old data replaced with new.", "green")
                 else:
                     show_msg(f"Errors saving to cloud: {errors}", "red")
 
