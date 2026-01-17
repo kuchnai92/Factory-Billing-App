@@ -69,7 +69,7 @@ try:
 except ImportError:
     HAS_RESHAPER = False
 
-# --- SMART DATA DIRECTORY SETUP ---
+# --- SMART DATA DIRECTORY SETUP (UPDATED FOR PERMANENT STORAGE) ---
 if getattr(sys, 'frozen', False):
     BASE_INTERNAL_DIR = sys._MEIPASS 
     BASE_EXTERNAL_DIR = os.path.dirname(sys.executable)
@@ -84,28 +84,16 @@ ASSETS_DIR = os.path.join(BASE_INTERNAL_DIR, "assets")
 if IS_WINDOWS_DESKTOP:
     REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 else:
-    # --- MOBILE STORAGE LOGIC ---
-    # Try to use the public storage so user can see the folder
+    # --- FIXED: MOBILE PERMANENT STORAGE LOGIC ---
+    # We use os.path.expanduser("~") which points to the internal
+    # app data directory (e.g., /data/data/com.yourapp/files/).
+    # This is PERMANENT (survives app close) and requires NO permissions.
     try:
-        # Attempt to use /storage/emulated/0/AminSons_Data (Standard Android Root)
-        public_path = "/storage/emulated/0/AminSons_Data"
-        if not os.path.exists(public_path):
-            try:
-                os.makedirs(public_path)
-            except:
-                pass # Permission might not be granted yet, will retry in main
-        REAL_DATA_DIR = public_path
-    except PermissionError:
-        # Fallback to App Internal Storage if permission denied
-        try:
-            user_home = os.path.expanduser("~")
-            REAL_DATA_DIR = os.path.join(user_home, "AminSons_Data")
-        except:
-            REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
-    except Exception:
-         # Generic Fallback
         user_home = os.path.expanduser("~")
         REAL_DATA_DIR = os.path.join(user_home, "AminSons_Data")
+    except Exception:
+        # Fallback only if the above fails
+        REAL_DATA_DIR = os.path.join(BASE_EXTERNAL_DIR, "data")
 
 if not os.path.exists(REAL_DATA_DIR):
     try: os.makedirs(REAL_DATA_DIR)
@@ -149,19 +137,9 @@ def setup_paths(username):
     global DATA_DIR, INVENTORY_FILE, INVOICES_JSON, CUSTOMERS_FILE, RECYCLE_BIN_FILE, RETURNS_FILE, CURRENT_ADMIN
     CURRENT_ADMIN = username
     
-    # Retry creating public directory if permission was just granted
-    if not IS_WINDOWS_DESKTOP:
-        try:
-            public_path = "/storage/emulated/0/AminSons_Data"
-            if not os.path.exists(public_path):
-                os.makedirs(public_path)
-            # If successful, use this path
-            DATA_DIR = os.path.join(public_path, f"data_{username}")
-        except:
-            # Fallback to whatever REAL_DATA_DIR was determined as
-            DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
-    else:
-        DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
+    # --- UPDATED PATH LOGIC ---
+    # We stick to REAL_DATA_DIR which we calculated safely at the start.
+    DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
     
     if not os.path.exists(DATA_DIR):
         try: os.makedirs(DATA_DIR)
@@ -574,7 +552,7 @@ def main(page: ft.Page):
     page.window.width = 1200
     page.window.height = 800
     
-    mode_title = "Desktop Mode" if IS_WINDOWS_DESKTOP else "Mobile Mode (Storage: AminSons_Data)"
+    mode_title = "Desktop Mode" if IS_WINDOWS_DESKTOP else "Mobile Mode (Permanent Storage)"
     page.title = f"Amin & Sons - {mode_title}"
     
     page.theme_mode = ft.ThemeMode.LIGHT
