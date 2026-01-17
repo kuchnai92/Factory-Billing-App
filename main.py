@@ -90,7 +90,10 @@ else:
         # Attempt to use /storage/emulated/0/AminSons_Data (Standard Android Root)
         public_path = "/storage/emulated/0/AminSons_Data"
         if not os.path.exists(public_path):
-            os.makedirs(public_path)
+            try:
+                os.makedirs(public_path)
+            except:
+                pass # Permission might not be granted yet, will retry in main
         REAL_DATA_DIR = public_path
     except PermissionError:
         # Fallback to App Internal Storage if permission denied
@@ -146,7 +149,20 @@ def setup_paths(username):
     global DATA_DIR, INVENTORY_FILE, INVOICES_JSON, CUSTOMERS_FILE, RECYCLE_BIN_FILE, RETURNS_FILE, CURRENT_ADMIN
     CURRENT_ADMIN = username
     
-    DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
+    # Retry creating public directory if permission was just granted
+    if not IS_WINDOWS_DESKTOP:
+        try:
+            public_path = "/storage/emulated/0/AminSons_Data"
+            if not os.path.exists(public_path):
+                os.makedirs(public_path)
+            # If successful, use this path
+            DATA_DIR = os.path.join(public_path, f"data_{username}")
+        except:
+            # Fallback to whatever REAL_DATA_DIR was determined as
+            DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
+    else:
+        DATA_DIR = os.path.join(REAL_DATA_DIR, f"data_{username}")
+    
     if not os.path.exists(DATA_DIR):
         try: os.makedirs(DATA_DIR)
         except: pass
@@ -515,6 +531,22 @@ def print_pdf_silently(path):
 # --- MAIN APP ---
 def main(page: ft.Page):
     page.window_icon = "icon.png"
+    
+    # --- PERMISSION HANDLER (Mobile Only) ---
+    permission_handler = ft.PermissionHandler()
+    page.overlay.append(permission_handler)
+    
+    def check_permissions():
+        if not IS_WINDOWS_DESKTOP:
+            try:
+                # Request storage permissions for Android
+                permission_handler.request_permission(ft.PermissionType.STORAGE)
+            except Exception as e:
+                print(f"Permission Request Error: {e}")
+
+    # Call permission check on startup
+    check_permissions()
+    
     page.controls.clear()
     page.update()
 
@@ -1134,18 +1166,32 @@ def main(page: ft.Page):
         
         balance_label = ft.Text(f"Current Balance: {cust.get('balance', 0):.2f}", weight="bold", size=16, color="red" if cust.get('balance', 0) > 0 else "black")
         
+        # --- FIX: Removed expand=True for mobile inputs in Column ---
+        # Instead of expand=True which breaks vertical layout, we use width to fill space
+        
         trx_type_dd = ft.Dropdown(
             label="Transaction Type",
             options=[ft.dropdown.Option("Receive Payment (IN)"), ft.dropdown.Option("Pay Back / Refund (OUT)")],
             value="Receive Payment (IN)",
-            width=None if not IS_WINDOWS_DESKTOP else 250,
-            expand=not IS_WINDOWS_DESKTOP
+            width=3000, # Fill width
         )
 
-        amount_field = ft.TextField(label="Payment Amount", width=None if not IS_WINDOWS_DESKTOP else 200, expand=not IS_WINDOWS_DESKTOP)
-        inv_val_field = ft.TextField(label="Invoice # (Optional)", width=None if not IS_WINDOWS_DESKTOP else 150, expand=not IS_WINDOWS_DESKTOP)
-        method_dd = ft.Dropdown(label="Method", options=[ft.dropdown.Option("Cash/Hand-to-Hand"), ft.dropdown.Option("Online/Bank"), ft.dropdown.Option("Bank Check")], width=None if not IS_WINDOWS_DESKTOP else 200, value="Cash/Hand-to-Hand", expand=not IS_WINDOWS_DESKTOP)
-        details_field = ft.TextField(label="Payment Details (Bank Name, Trx ID, etc.)", multiline=True, width=None if not IS_WINDOWS_DESKTOP else 410, expand=not IS_WINDOWS_DESKTOP)
+        # In a Row, expand=True is safer, but keeping it controlled
+        amount_field = ft.TextField(label="Payment Amount", expand=1)
+        inv_val_field = ft.TextField(label="Invoice # (Optional)", expand=1)
+        
+        method_dd = ft.Dropdown(
+            label="Method", 
+            options=[ft.dropdown.Option("Cash/Hand-to-Hand"), ft.dropdown.Option("Online/Bank"), ft.dropdown.Option("Bank Check")], 
+            value="Cash/Hand-to-Hand",
+            width=3000 # Fill width
+        )
+        
+        details_field = ft.TextField(
+            label="Payment Details (Bank Name, Trx ID, etc.)", 
+            multiline=True, 
+            width=3000 # Fill width
+        )
 
         def delete_payment_entry(entry):
             def confirm_del(e):
@@ -1245,19 +1291,19 @@ def main(page: ft.Page):
                 ft.Divider(), 
                 ft.Text("Record New Transaction", weight="bold"), 
                 trx_type_dd, 
-                ft.Row([amount_field, inv_val_field], wrap=True), # Wrap inputs for mobile
+                ft.Row([amount_field, inv_val_field]), # Expand works fine in Row
                 method_dd, 
                 details_field, 
                 ft.Row([
-                    ft.ElevatedButton(content=ft.Text("Process Transaction"), on_click=add_payment, bgcolor="green", color="white", expand=not IS_WINDOWS_DESKTOP), 
-                    ft.ElevatedButton(content=ft.Text("Export (Excel)"), icon=ft.Icons.DOWNLOAD, on_click=export_history_excel, bgcolor="blue", color="white", expand=not IS_WINDOWS_DESKTOP)
-                ], spacing=10, wrap=True), # Wrap buttons
+                    ft.ElevatedButton(content=ft.Text("Process Transaction"), on_click=add_payment, bgcolor="green", color="white", expand=True), 
+                    ft.ElevatedButton(content=ft.Text("Export (Excel)"), icon=ft.Icons.DOWNLOAD, on_click=export_history_excel, bgcolor="blue", color="white", expand=True)
+                ], spacing=10),
                 ft.Divider(), 
                 ft.Text("Past Payments", weight="bold"), 
-                # Vertical scroll for table section
-                ft.Column([table_scroll_container], scroll=ft.ScrollMode.AUTO, height=300) 
+                # Vertical scroll for table section - REDUCED HEIGHT to 200
+                ft.Column([table_scroll_container], scroll=ft.ScrollMode.AUTO, height=200) 
             ], tight=True, scroll=ft.ScrollMode.AUTO),
-            width=750 if IS_WINDOWS_DESKTOP else page.width - 20, # Dynamic width
+            width=750 if IS_WINDOWS_DESKTOP else page.width - 20, 
             padding=10
         )
 
