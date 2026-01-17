@@ -368,6 +368,7 @@ def generate_pdf(invoice, filename):
         addr_raw = invoice.get('customer_address', '')
         if addr_raw:
             final_addr = set_font_smart(addr_raw, '', 10)
+            # BRACKETS ADDED HERE
             pdf.cell(0, 6, f"({final_addr})", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         
         pdf.ln(2)
@@ -539,8 +540,12 @@ def main(page: ft.Page):
     # We only initialize this if NOT on Windows. We also use a try-except block
     # to catch the 'AttributeError' if the Flet library on desktop is old or missing this class.
     if not IS_WINDOWS_DESKTOP:
-        permission_handler = ft.PermissionHandler()
-        page.overlay.append(permission_handler)
+        try:
+            permission_handler = ft.PermissionHandler()
+            page.overlay.append(permission_handler)
+        except Exception as e:
+            print(f"PermissionHandler init error: {e}")
+            permission_handler = None
     
     def check_permissions():
         # 2. PERMISSION CHECK (FIXED)
