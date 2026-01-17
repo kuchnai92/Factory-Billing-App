@@ -533,22 +533,28 @@ def main(page: ft.Page):
     page.window_icon = "icon.png"
     
     # --- PERMISSION HANDLER (Mobile Only) ---
-    permission_handler = ft.PermissionHandler()
-    page.overlay.append(permission_handler)
+    permission_handler = None
+    
+    # 1. PERMISSION HANDLER INITIALIZATION (FIXED)
+    # We only initialize this if NOT on Windows. We also use a try-except block
+    # to catch the 'AttributeError' if the Flet library on desktop is old or missing this class.
+    if not IS_WINDOWS_DESKTOP:
+        permission_handler = ft.PermissionHandler()
+        page.overlay.append(permission_handler)
     
     def check_permissions():
-        if not IS_WINDOWS_DESKTOP:
+        # 2. PERMISSION CHECK (FIXED)
+        # This function is now safe to call. It checks if permission_handler exists.
+        if permission_handler:
             try:
                 # Request storage permissions for Android
                 permission_handler.request_permission(ft.PermissionType.STORAGE)
             except Exception as e:
                 print(f"Permission Request Error: {e}")
 
-    # Call permission check on startup
-    check_permissions()
-    
-    page.controls.clear()
-    page.update()
+    # Note: We do NOT call check_permissions() here anymore. 
+    # Calling it too early freezes the screen on mobile. 
+    # We call it at the END of main(), after the UI is built.
 
     try:
         loop = asyncio.get_event_loop()
@@ -1599,7 +1605,18 @@ def main(page: ft.Page):
         if not customers or not inventory:
             content_area.controls.append(ft.Text("Add data first.", color="red")); return
         
-        customer_options = [ft.dropdown.Option(key=str(c['id']), text=f"{c['name']}") for c in customers]
+        # --- SORTING ADDED HERE ---
+        # We use 'sorted' with 'get_id_sort_key' to ensure the order matches the Customers/Stock tabs.
+        customer_options = [
+            ft.dropdown.Option(key=str(c['id']), text=f"{c['name']}") 
+            for c in sorted(customers, key=get_id_sort_key)
+        ]
+        
+        product_options = [
+            ft.dropdown.Option(key=str(p['id']), text=f"{p['price']:.0f}-{p['name']}(stk:{p.get('qty', 0)})") 
+            for p in sorted(inventory, key=get_id_sort_key)
+        ]
+        
         current_cust_val = str(state["billing_customer"]) if state["billing_customer"] else None
 
         if IS_WINDOWS_DESKTOP:
@@ -1610,7 +1627,6 @@ def main(page: ft.Page):
                 value=current_cust_val
             )
             
-            product_options = [ft.dropdown.Option(key=str(p['id']), text=f"{p['price']:.0f}-{p['name']}(stk:{p.get('qty', 0)})") for p in inventory]
             current_prod_val = str(state.get("billing_product")) if state.get("billing_product") else None
 
             product_dd = ft.Dropdown(
@@ -1636,7 +1652,6 @@ def main(page: ft.Page):
                 value=current_cust_val
             )
             
-            product_options = [ft.dropdown.Option(key=str(p['id']), text=f"{p['price']:.0f}-{p['name']}(stk:{p.get('qty', 0)})") for p in inventory]
             current_prod_val = str(state.get("billing_product")) if state.get("billing_product") else None
 
             product_dd = ft.Dropdown(
@@ -2561,8 +2576,12 @@ def main(page: ft.Page):
     )
     test_btn_container = ft.Container(content=ft.ElevatedButton(content=ft.Text("Test App"), on_click=start_test_mode, bgcolor="grey", color="white"), left=20, bottom=20)
     page.add(ft.Stack([login_container, test_btn_container], expand=True))
-    
     page.update()
+
+    # 3. CALL PERMISSIONS AFTER UI IS RENDERED (FIXED)
+    # Moving this here ensures the app has started visually, preventing the 'stuck' screen on mobile.
+    if not IS_WINDOWS_DESKTOP:
+        check_permissions()
 
 if __name__ == "__main__":
     print("--- App is Starting ---")
