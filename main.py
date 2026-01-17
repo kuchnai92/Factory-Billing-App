@@ -368,7 +368,7 @@ def generate_pdf(invoice, filename):
         addr_raw = invoice.get('customer_address', '')
         if addr_raw:
             final_addr = set_font_smart(addr_raw, '', 10)
-            # BRACKETS ADDED HERE
+            # BRACKETS ADDED FOR ADDRESS AS REQUESTED
             pdf.cell(0, 6, f"({final_addr})", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         
         pdf.ln(2)
@@ -536,9 +536,7 @@ def main(page: ft.Page):
     # --- PERMISSION HANDLER (Mobile Only) ---
     permission_handler = None
     
-    # 1. PERMISSION HANDLER INITIALIZATION (FIXED)
-    # We only initialize this if NOT on Windows. We also use a try-except block
-    # to catch the 'AttributeError' if the Flet library on desktop is old or missing this class.
+    # FIX: Initialize PermissionHandler only if NOT desktop
     if not IS_WINDOWS_DESKTOP:
         try:
             permission_handler = ft.PermissionHandler()
@@ -548,8 +546,7 @@ def main(page: ft.Page):
             permission_handler = None
     
     def check_permissions():
-        # 2. PERMISSION CHECK (FIXED)
-        # This function is now safe to call. It checks if permission_handler exists.
+        # FIX: Check permission handler exists before use
         if permission_handler:
             try:
                 # Request storage permissions for Android
@@ -557,9 +554,8 @@ def main(page: ft.Page):
             except Exception as e:
                 print(f"Permission Request Error: {e}")
 
-    # Note: We do NOT call check_permissions() here anymore. 
-    # Calling it too early freezes the screen on mobile. 
-    # We call it at the END of main(), after the UI is built.
+    # Note: We do NOT call check_permissions() here. 
+    # We call it delayed at the end of main() to avoid freezing the app.
 
     try:
         loop = asyncio.get_event_loop()
@@ -2581,12 +2577,16 @@ def main(page: ft.Page):
     )
     test_btn_container = ft.Container(content=ft.ElevatedButton(content=ft.Text("Test App"), on_click=start_test_mode, bgcolor="grey", color="white"), left=20, bottom=20)
     page.add(ft.Stack([login_container, test_btn_container], expand=True))
+    
     page.update()
 
-    # 3. CALL PERMISSIONS AFTER UI IS RENDERED (FIXED)
-    # Moving this here ensures the app has started visually, preventing the 'stuck' screen on mobile.
+    # FIX: Delayed permission request (3 seconds) to allow UI to render first
     if not IS_WINDOWS_DESKTOP:
-        check_permissions()
+        def delayed_check():
+            check_permissions()
+        
+        # Timer ensures the login screen is visible before the permission dialog pops up
+        threading.Timer(3.0, delayed_check).start()
 
 if __name__ == "__main__":
     print("--- App is Starting ---")
